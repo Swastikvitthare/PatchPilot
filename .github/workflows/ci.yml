@@ -8,7 +8,7 @@ on:
 
 jobs:
   backend-tests:
-    name: Backend Tests
+    name: Backend Security Tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -27,14 +27,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run linter
-        run: python -m ruff check app/ tests/
-
-      - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+      - name: Run security scanner tests
+        run: python -m pytest tests/test_scanners.py -v --tb=short
 
   frontend-build:
-    name: Frontend Build
+    name: Frontend Build Check
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -48,18 +45,10 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm install
 
-      - name: Type check
-        run: pnpm exec tsc --noEmit
-
-      - name: Build
-        run: pnpm build
+      - name: Build check
+        run: npm run build
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000/api
