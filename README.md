@@ -22,7 +22,7 @@
 ## 🌐 Live Interactive Demo
 
 Test PATCHPILOT directly in your browser without local setup:  
-👉 **[https://swastikvitthare.github.io/patchpilot/](https://swastikvitthare.github.io/patchpilot/)**
+👉 **https://swastikvitthare.github.io/PatchPilot/)**
 
 ---
 
