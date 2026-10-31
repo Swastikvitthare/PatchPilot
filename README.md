@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 <p align="center">
   <img src="https://img.shields.io/badge/PATCHPILOT-Cybersecurity-06b6d4?style=for-the-badge&logo=shield&logoColor=white" alt="PATCHPILOT" />
 </p>
@@ -10,73 +9,84 @@
 </p>
 
 <p align="center">
+  <a href="https://swastikvitthare.github.io/patchpilot/">
+    <img src="https://img.shields.io/badge/Live_Demo-GitHub_Pages-10b981?style=for-the-badge&logo=github&logoColor=white" alt="Live Demo" />
+  </a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/Track-Open--Weight_AI-10b981?style=flat-square" alt="Open-Weight AI" />
   <img src="https://img.shields.io/badge/AI-Google_Gemma_4-4285F4?style=flat-square" alt="Gemma 4" />
   <img src="https://img.shields.io/badge/Deploy-DigitalOcean-0080FF?style=flat-square" alt="DigitalOcean" />
-  <img src="https://img.shields.io/github/license/YOUR_USERNAME/patchpilot?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/github/license/Swastikvitthare/patchpilot?style=flat-square" alt="License" />
 </p>
+
+---
+
+## 🌐 Live Interactive Demo
+
+Test PATCHPILOT directly in your browser without local setup:  
+👉 **[https://swastikvitthare.github.io/patchpilot/](https://swastikvitthare.github.io/patchpilot/)**
 
 ---
 
 ## What is PATCHPILOT?
 
-PATCHPILOT is an AI-powered cybersecurity tool that scans Python code for security vulnerabilities, explains them using Google Gemma 4, generates verified patches, and produces professional security reports.
+PATCHPILOT is an AI-powered cybersecurity application that scans Python code for security vulnerabilities, explains them using Google Gemma 4, generates verified patches, and produces professional security reports.
 
 ### Key Features
 
 | Feature | Description |
 |---------|-------------|
-| 🔍 **Code Scanner** | Monaco-based code editor with file upload support |
-| 💉 **SQL Injection Detection** | Identifies string concatenation, f-strings, and format() in SQL queries |
-| 🔑 **Credential Detection** | Finds hardcoded passwords, API keys, AWS tokens, and secrets |
-| ⚠️ **Unsafe Eval Detection** | Flags eval(), exec(), os.system(), shell=True, pickle.loads() |
+| 🔍 **Code Scanner** | Monaco-based code editor with file upload support (.py) |
+| 💉 **SQL Injection Detection** | Identifies concatenation, f-strings, and .format() in SQL queries (CWE-89) |
+| 🔑 **Credential Detection** | Finds hardcoded passwords, API keys, AWS tokens, and secrets (CWE-798) |
+| ⚠️ **Unsafe Eval Detection** | Flags eval(), exec(), os.system(), subprocess shell=True, pickle.loads() |
 | 🐍 **Python Static Analysis** | Detects dangerous imports, debug mode, insecure random usage |
 | 🤖 **AI Explanations** | Gemma 4 explains each vulnerability in plain language |
 | 🩹 **Auto-Patching** | AI-generated security patches with confidence scores |
-| ↔️ **Diff Comparison** | Side-by-side original vs. patched code view |
+| ↔️ **Diff Comparison** | Side-by-side original vs. patched code view in Monaco Editor |
 | ✅ **Re-scanning** | Verify patches by re-scanning the corrected code |
-| 📄 **PDF Reports** | Downloadable security reports with full analysis |
+| 📄 **Downloadable Reports** | Export complete security reports with full analysis |
 
 ---
 
-## Quick Start
+## Quick Start (Local)
 
 ### Prerequisites
 
 - Python 3.11+
 - Node.js 20+
-- pnpm (`npm install -g pnpm`)
 
-### 1. Clone and Configure
+### 1-Click Launch (Windows)
 
-```bash
-git clone https://github.com/YOUR_USERNAME/patchpilot.git
+```bat
+git clone https://github.com/Swastikvitthare/patchpilot.git
 cd patchpilot
-cp .env.example .env
-# Edit .env with your Gemma 4 API credentials (optional — app works without AI)
+start.bat
 ```
 
-### 2. Start Backend
+> `start.bat` automatically checks dependencies and opens the backend on `http://localhost:8000` and the frontend on `http://localhost:3000`.
 
+### Manual Launch
+
+**Backend:**
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS/Linux
+venv\Scripts\activate        # Windows (or source venv/bin/activate on Unix)
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. Start Frontend
-
+**Frontend:**
 ```bash
 cd frontend
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
-### 4. Open
-
+Open:
 - **App:** http://localhost:3000
 - **API Docs:** http://localhost:8000/docs
 
@@ -88,136 +98,104 @@ pnpm dev
 patchpilot/
 ├── backend/               # Python FastAPI backend
 │   ├── app/
-│   │   ├── main.py        # FastAPI application
-│   │   ├── config.py      # Environment configuration
-│   │   ├── models.py      # Pydantic data models
-│   │   ├── routers/       # API route handlers
-│   │   ├── scanners/      # Security scanning engines
-│   │   ├── services/      # AI & report services
-│   │   └── utils/         # Sanitization utilities
-│   ├── tests/             # Backend test suite
+│   │   ├── main.py        # FastAPI application + CORS
+│   │   ├── config.py      # Pydantic Settings
+│   │   ├── models/        # Pydantic data models
+│   │   ├── routers/       # Scanner, Patcher, Report API routes
+│   │   ├── scanners/      # SQL Injection, Credentials, Eval, Python Static
+│   │   ├── services/      # Gemma 4 client, Patch generator, PDF report
+│   │   └── utils/         # Sanitizer & security limits
+│   ├── tests/             # Pytest test suite (26 unit tests)
 │   └── demo/              # Vulnerable code examples
-├── frontend/              # Next.js TypeScript frontend
+├── frontend/              # Next.js 14 TypeScript frontend
 │   └── src/
-│       ├── app/           # Pages (App Router)
-│       ├── components/    # React components
-│       ├── lib/           # API client & types
-│       └── hooks/         # Custom React hooks
-├── docs/                  # Architecture & deployment docs
-├── .github/workflows/     # CI pipeline
-└── docker-compose.yml     # Docker orchestration
+│       ├── app/           # App Router pages (Scanner, Results, Patch, Report)
+│       ├── components/    # Monaco Editor, Diff Viewer, Severity Badges
+│       ├── lib/           # Typed API client + in-browser fallback scanner
+│       └── hooks/         # Scanner state management
+├── .github/workflows/     # CI & GitHub Pages automated deployment
+└── docker-compose.yml     # Docker deployment configuration
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed system design.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation.
 
 ---
 
-## AI Configuration
+## AI Configuration (Google Gemma 4)
 
-PATCHPILOT uses **Google Gemma 4** via DigitalOcean Gradient for:
-- Vulnerability explanations
-- Security patch generation
-- Code improvement suggestions
+PATCHPILOT connects to **Google Gemma 4** via DigitalOcean Gradient for:
+- Plain-language vulnerability root-cause explanations
+- Targeted, contextual security patch synthesis
+- Developer fix recommendations
 
-### Setting Up Gemma 4
-
-1. Deploy Gemma 4 on [DigitalOcean Gradient](https://www.digitalocean.com/products/gpu-droplets)
-2. Set environment variables:
+### Environment Variables (.env)
 
 ```env
-GEMMA_API_KEY=your_api_key
-GEMMA_API_URL=https://your-gradient-endpoint/v1
+GEMMA_API_KEY=your_api_key_here
+GEMMA_API_URL=https://your-gradient-endpoint.digitaloceanspaces.com/v1
 GEMMA_MODEL=google/gemma-4-27b-it
+DIGITALOCEAN_API_TOKEN=your_token_here
 ```
 
-### Degraded Mode
+### Graceful Degradation
 
-Without AI credentials, PATCHPILOT still provides:
-- ✅ All security scanning features
-- ✅ Rule-based patch suggestions
-- ✅ PDF report generation
-- ❌ AI-powered explanations
-- ❌ AI-generated patches
+If AI credentials are not provided or the backend is offline:
+- ✅ All deterministic security scanners run normally
+- ✅ Rule-based verified security patches are generated automatically
+- ✅ Re-scanning verification functions 100%
+- ✅ Security reports remain downloadable
 
 ---
 
 ## Security Scanning Rules
 
-### SQL Injection (CWE-89)
-Detects string interpolation in SQL queries via concatenation, f-strings, `.format()`, and `%` formatting.
+### 1. SQL Injection (CWE-89)
+- String concatenation in queries (`SELECT ... + user_input`)
+- f-string interpolation (`f"SELECT ... {user_input}"`)
+- `.format()` formatting (`"SELECT ... {}".format(user_input)`)
+- `%` string formatting (`"SELECT ... %s" % user_input`)
 
-### Hardcoded Credentials (CWE-798)
-Identifies passwords, API keys, tokens, and secrets assigned as string literals, including AWS key patterns.
+### 2. Hardcoded Credentials (CWE-798)
+- AWS Access Key IDs (`AKIA...`)
+- Variables assigned literal secret strings (`password`, `api_key`, `token`, `secret`)
+- Private key patterns and API tokens
 
-### Unsafe Code Execution (CWE-95, CWE-78)
-Flags `eval()`, `exec()`, `os.system()`, `subprocess.call(shell=True)`, `pickle.loads()`.
+### 3. Unsafe Code Execution (CWE-95, CWE-78)
+- `eval()` and `exec()` calls
+- `os.system()` and command execution
+- `subprocess` with `shell=True`
+- Insecure deserialization with `pickle.loads()`
 
-### Python Security (Various CWEs)
-Detects dangerous imports, debug mode, insecure random, missing CSRF protection, and more.
-
----
-
-## Deployment
-
-### Docker
-
-```bash
-docker compose up --build
-```
-
-### DigitalOcean App Platform
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full deployment instructions.
+### 4. Security Misconfigurations (CWE-94, CWE-338)
+- Flask / Django `debug=True` in production
+- Use of insecure `random` module for cryptography/tokens
+- Insecure `assert` statements used for authorization
 
 ---
 
-## Development
+## Automated Deployment
 
-### Running Tests
+### GitHub Pages (Frontend)
+
+Every push to `main` automatically triggers the GitHub Actions workflow in `.github/workflows/deploy-pages.yml` to build and deploy to GitHub Pages:
+- **URL:** [https://swastikvitthare.github.io/patchpilot/](https://swastikvitthare.github.io/patchpilot/)
+
+### DigitalOcean App Platform (Full Stack)
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions on deploying the FastAPI backend and connecting Gemma 4 inference on DigitalOcean Gradient.
+
+---
+
+## Running Tests
 
 ```bash
-# Backend
 cd backend
-pytest tests/ -v
-
-# Frontend
-cd frontend
-pnpm build  # Type-checks during build
+venv\Scripts\activate
+python -m pytest tests/test_scanners.py -v
 ```
-
-### Demo Files
-
-The `backend/demo/` directory contains intentionally vulnerable Python files for testing:
-- `vulnerable_example.py` — Multiple vulnerability types
-- `sql_example.py` — SQL injection patterns
-
----
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|-----------|
-| Frontend | Next.js 14, TypeScript, Tailwind CSS, Monaco Editor |
-| Backend | Python 3.11, FastAPI, Pydantic v2 |
-| AI | Google Gemma 4 (27B, instruction-tuned) |
-| Scanning | AST analysis, regex patterns, custom rules |
-| Reports | ReportLab PDF generation |
-| CI/CD | GitHub Actions |
-| Deployment | DigitalOcean App Platform + Gradient |
 
 ---
 
 ## License
 
 [MIT](LICENSE)
-
----
-
-<p align="center">
-  Built for the DigitalOcean App Platform Hackathon · Open-Weight AI Track<br/>
-  Powered by <strong>Google Gemma 4</strong> on <strong>DigitalOcean Gradient</strong>
-</p>
-=======
-# PatchPilot
-PATCHPILOT is an  AI-powered cybersecurity engineer that detects software vulnerabilities, explains security risks, generates intelligent code patches, and validates fixes through automated security scanning. Powered by Google Gemma 4 and DigitalOcean infrastructur PATCHPILOT helps developers identify, understand, and resolve security issues
->>>>>>> c4c7d26844f70f9e21875f750361e49167a0665f
