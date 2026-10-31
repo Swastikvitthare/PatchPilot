@@ -31,7 +31,7 @@ const quickActions = [
     title: "View Docs",
     desc: "Architecture and deployment documentation",
     icon: FileText,
-    href: "https://github.com/your-username/patchpilot",
+    href: "https://github.com/Swastikvitthare/PatchPilot",
     color: "from-purple-500 to-purple-600",
   },
 ];

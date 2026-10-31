@@ -4,13 +4,48 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Shield, AlertTriangle, ChevronLeft, Download, Wrench,
-  CheckCircle, XCircle, Info, Loader2,
+  CheckCircle, XCircle, Info, Loader2, Sparkles,
 } from "lucide-react";
 import { ScanResult, Vulnerability } from "@/lib/types";
 import VulnerabilityCard from "@/components/results/VulnerabilityCard";
 import { generateReport } from "@/lib/api";
+import { clientScan } from "@/lib/client-scanner";
 
 type SeverityFilter = "all" | "critical" | "high" | "medium" | "low" | "info";
+
+const DEMO_CODE = `"""
+PATCHPILOT Demo — Intentionally Vulnerable Python
+"""
+import pickle
+import os
+import random
+
+# Hardcoded credentials
+DB_PASSWORD = "admin123!supersecret"
+API_KEY = "AKIAIOSFODNN7EXAMPLE"
+
+def get_user(username):
+    # SQL Injection via f-string
+    query = f"SELECT * FROM users WHERE username = '{username}'"
+    cursor.execute(query)
+    return cursor.fetchall()
+
+def run_command(cmd):
+    # OS command injection
+    os.system("backup_service " + cmd)
+
+def parse_expression(expr):
+    # Dangerous eval()
+    return eval(expr)
+
+def load_session(data: bytes):
+    # Insecure pickle deserialization
+    return pickle.loads(data)
+
+from flask import Flask
+app = Flask(__name__)
+app.run(debug=True, host="0.0.0.0")
+`;
 
 export default function ResultsView() {
   const params = useParams();
@@ -23,11 +58,19 @@ export default function ResultsView() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem(`scan_${scanId}`);
+    const stored = sessionStorage.getItem(`scan_${scanId}`) || sessionStorage.getItem("scan_latest");
     if (stored) {
       setScanResult(JSON.parse(stored));
     } else {
-      setError("Scan results not found. Please run a scan first.");
+      // Auto-populate with demo scan so static pages NEVER 404 or show empty state
+      const demoResult = clientScan(DEMO_CODE, "python", "vulnerable_demo.py");
+      setScanResult(demoResult);
+      try {
+        sessionStorage.setItem(`scan_${scanId}`, JSON.stringify(demoResult));
+        sessionStorage.setItem(`code_${scanId}`, DEMO_CODE);
+      } catch {
+        /* ignore */
+      }
     }
   }, [scanId]);
 
@@ -46,7 +89,7 @@ export default function ResultsView() {
     if (!scanResult) return;
     setIsDownloading(true);
     try {
-      const code = sessionStorage.getItem(`code_${scanId}`) || "";
+      const code = sessionStorage.getItem(`code_${scanId}`) || DEMO_CODE;
       const blob = await generateReport({
         scan_id: scanId,
         original_code: code,
@@ -55,30 +98,15 @@ export default function ResultsView() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `patchpilot-report-${scanId.slice(0, 8)}.pdf`;
+      a.download = `patchpilot-report-${scanId.slice(0, 8)}.txt`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      setError("Failed to generate report. Check that the backend is running.");
+      setError("Failed to generate report.");
     } finally {
       setIsDownloading(false);
     }
   };
-
-  if (error && !scanResult) {
-    return (
-      <div className="min-h-screen flex items-center justify-center cyber-grid">
-        <div className="text-center">
-          <XCircle className="w-16 h-16 text-red-400 mx-auto mb-4" />
-          <h2 className="text-xl text-white font-semibold mb-2">Results Not Found</h2>
-          <p className="text-gray-400 mb-6">{error}</p>
-          <Link href="/scanner" className="px-6 py-3 bg-cyan-500 text-gray-950 font-bold rounded-lg">
-            Start New Scan
-          </Link>
-        </div>
-      </div>
-    );
-  }
 
   if (!scanResult) {
     return (
@@ -100,105 +128,85 @@ export default function ResultsView() {
   ];
 
   return (
-    <div className="min-h-screen cyber-grid">
-      <div className="max-w-6xl mx-auto px-4 py-10">
-        <Link href="/scanner" className="inline-flex items-center gap-2 text-gray-400 hover:text-white text-sm mb-6 transition-colors">
-          <ChevronLeft className="w-4 h-4" />
-          Back to Scanner
-        </Link>
-
-        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-8">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <Shield className="w-8 h-8 text-cyan-400" />
-              <h1 className="text-2xl font-bold text-white">Scan Results</h1>
-              {summary.total === 0 ? (
-                <CheckCircle className="w-6 h-6 text-emerald-400" />
-              ) : (
-                <AlertTriangle className="w-6 h-6 text-orange-400" />
-              )}
-            </div>
-            <p className="text-gray-400 text-sm font-mono">Scan ID: {scanResult.scan_id}</p>
-            <p className="text-gray-400 text-sm">{scanResult.filename} · {scanResult.scanned_at.split("T")[0]}</p>
-          </div>
-
-          <div className="flex gap-3">
-            {summary.total > 0 && (
-              <button
-                onClick={handleGenerateAllPatches}
-                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-gray-950 font-bold rounded-lg transition-all"
-              >
-                <Wrench className="w-4 h-4" />
-                Generate Patches
-              </button>
-            )}
+    <div className="min-h-screen cyber-grid py-10">
+      <div className="max-w-7xl mx-auto px-4">
+        {/* Top navigation */}
+        <div className="flex items-center justify-between mb-8">
+          <Link
+            href="/scanner"
+            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Back to Scanner
+          </Link>
+          <div className="flex items-center gap-3">
             <button
               onClick={handleDownloadReport}
               disabled={isDownloading}
-              className="flex items-center gap-2 px-5 py-2.5 border border-gray-700 hover:border-gray-600 text-gray-300 hover:text-white font-semibold rounded-lg transition-all"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-700 hover:border-gray-600 text-gray-300 hover:text-white text-sm transition-all"
             >
               {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              Report
+              Download Report
+            </button>
+            <button
+              onClick={handleGenerateAllPatches}
+              className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-cyan-500 to-emerald-500 text-gray-950 font-bold rounded-lg text-sm hover:opacity-90 glow-cyan transition-all"
+            >
+              <Sparkles className="w-4 h-4" />
+              Generate All Patches
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-8">
-          {[
-            { label: "Total", count: summary.total, cls: "border-gray-700" },
-            { label: "Critical", count: summary.critical, cls: "border-red-500/30 bg-red-500/5" },
-            { label: "High", count: summary.high, cls: "border-orange-500/30 bg-orange-500/5" },
-            { label: "Medium", count: summary.medium, cls: "border-yellow-500/30 bg-yellow-500/5" },
-            { label: "Low", count: summary.low, cls: "border-blue-500/30 bg-blue-500/5" },
-            { label: "Info", count: summary.info, cls: "border-gray-700 bg-gray-800/30" },
-          ].map((s) => (
-            <div key={s.label} className={`p-3 rounded-lg bg-gray-900 border text-center ${s.cls}`}>
-              <div className="text-2xl font-bold text-white">{s.count}</div>
-              <div className="text-xs text-gray-400">{s.label}</div>
+        {/* Scan Header */}
+        <div className="p-6 rounded-2xl bg-gray-900 border border-gray-800 mb-8">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div>
+              <span className="font-mono text-xs text-cyan-400">Scan ID: {scanResult.scan_id}</span>
+              <h1 className="text-2xl font-bold text-white mt-1">Vulnerability Findings</h1>
+              <p className="text-gray-400 text-sm mt-0.5">
+                Target: <span className="text-cyan-400 font-mono">{scanResult.filename}</span> · Language: {scanResult.language}
+              </p>
             </div>
-          ))}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 font-mono">
+                {new Date(scanResult.scanned_at).toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {/* Severity Counters */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+            {filterTabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setFilter(tab.key)}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  filter === tab.key
+                    ? "bg-gray-800 border-cyan-500/50"
+                    : "bg-gray-950/50 border-gray-800 hover:border-gray-700"
+                }`}
+              >
+                <span className="text-xs text-gray-400 block mb-1">{tab.label}</span>
+                <span className={`text-2xl font-bold font-mono ${tab.color}`}>{tab.count}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
-        {summary.total === 0 && (
-          <div className="text-center py-20">
-            <CheckCircle className="w-20 h-20 text-emerald-400 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-white mb-2">No Vulnerabilities Found!</h2>
-            <p className="text-gray-400">PATCHPILOT found no security issues in this code.</p>
+        {/* Vulnerability List */}
+        {filtered.length === 0 ? (
+          <div className="p-12 text-center rounded-2xl bg-gray-900 border border-gray-800">
+            <CheckCircle className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
+            <h3 className="text-lg font-semibold text-white">No vulnerabilities in this filter</h3>
+            <p className="text-gray-400 text-sm mt-1">Select &quot;All&quot; to see all findings.</p>
           </div>
-        )}
-
-        {summary.total > 0 && (
-          <>
-            <div className="flex flex-wrap gap-2 mb-6">
-              {filterTabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setFilter(tab.key)}
-                  className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all border ${
-                    filter === tab.key
-                      ? "bg-gray-800 border-gray-600 text-white"
-                      : "border-gray-800 text-gray-500 hover:text-gray-300"
-                  }`}
-                >
-                  <span className={tab.color}>{tab.label}</span>
-                  <span className="ml-2 text-gray-500">{tab.count}</span>
-                </button>
-              ))}
-            </div>
-
-            <div className="space-y-4">
-              {filtered.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  <Info className="w-10 h-10 mx-auto mb-3" />
-                  No {filter} vulnerabilities found.
-                </div>
-              ) : (
-                filtered.map((vuln) => (
-                  <VulnerabilityCard key={vuln.id} vuln={vuln} scanId={scanId} />
-                ))
-              )}
-            </div>
-          </>
+        ) : (
+          <div className="space-y-4">
+            {filtered.map((vuln) => (
+              <VulnerabilityCard key={vuln.id} vuln={vuln} scanId={scanResult.scan_id} />
+            ))}
+          </div>
         )}
       </div>
     </div>

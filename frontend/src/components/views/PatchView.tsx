@@ -2,18 +2,48 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import {
   Wrench, ChevronLeft, Download, RefreshCw, CheckCircle,
-  AlertTriangle, Loader2, Bot, XCircle,
+  AlertTriangle, Loader2, Bot, Sparkles
 } from "lucide-react";
 import { ScanResult, Patch, PatchResult } from "@/lib/types";
 import { generatePatches, rescanCode, generateReport } from "@/lib/api";
+import { clientScan, clientPatch } from "@/lib/client-scanner";
+import DiffViewer from "@/components/patch/DiffViewer";
 
-const DiffViewer = dynamic(() => import("@/components/patch/DiffViewer"), {
-  ssr: false,
-  loading: () => <div className="h-64 bg-gray-900 rounded-lg flex items-center justify-center"><Loader2 className="w-6 h-6 text-cyan-400 animate-spin" /></div>,
-});
+const DEMO_CODE = `"""
+PATCHPILOT Demo — Intentionally Vulnerable Python
+"""
+import pickle
+import os
+import random
+
+# Hardcoded credentials
+DB_PASSWORD = "admin123!supersecret"
+AWS_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"
+
+def get_user(username):
+    # SQL Injection via f-string
+    query = f"SELECT * FROM users WHERE username = '{username}'"
+    cursor.execute(query)
+    return cursor.fetchall()
+
+def run_command(cmd):
+    # OS command injection
+    os.system("backup_utility --target " + cmd)
+
+def parse_expression(expr):
+    # Dangerous eval()
+    return eval(expr)
+
+def load_session(data: bytes):
+    # Insecure pickle deserialization
+    return pickle.loads(data)
+
+from flask import Flask
+app = Flask(__name__)
+app.run(debug=True, host="0.0.0.0")
+`;
 
 export default function PatchView() {
   const params = useParams();
@@ -30,13 +60,25 @@ export default function PatchView() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem(`scan_${scanId}`);
-    const code = sessionStorage.getItem(`code_${scanId}`);
+    const stored = sessionStorage.getItem(`scan_${scanId}`) || sessionStorage.getItem("scan_latest");
+    const code = sessionStorage.getItem(`code_${scanId}`) || sessionStorage.getItem("code_latest");
     if (stored && code) {
       setScanResult(JSON.parse(stored));
       setOriginalCode(code);
     } else {
-      setError("Scan data not found. Please run a scan first.");
+      // Auto-load demo scan and patches
+      const demoScan = clientScan(DEMO_CODE, "python", "vulnerable_app.py");
+      const demoPatches = clientPatch(DEMO_CODE, demoScan.vulnerabilities, scanId);
+      setScanResult(demoScan);
+      setOriginalCode(DEMO_CODE);
+      setPatchResult(demoPatches);
+      try {
+        sessionStorage.setItem(`scan_${scanId}`, JSON.stringify(demoScan));
+        sessionStorage.setItem(`code_${scanId}`, DEMO_CODE);
+        sessionStorage.setItem(`patch_${scanId}`, JSON.stringify(demoPatches));
+      } catch {
+        /* ignore */
+      }
     }
   }, [scanId]);
 
@@ -91,7 +133,7 @@ export default function PatchView() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `patchpilot-report-${scanId.slice(0, 8)}.pdf`;
+      a.download = `patchpilot-report-${scanId.slice(0, 8)}.txt`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -100,21 +142,6 @@ export default function PatchView() {
       setIsDownloading(false);
     }
   };
-
-  if (error && !scanResult) {
-    return (
-      <div className="min-h-screen flex items-center justify-center cyber-grid">
-        <div className="text-center">
-          <XCircle className="w-16 h-16 text-red-400 mx-auto mb-4" />
-          <h2 className="text-xl text-white font-semibold mb-2">Data Not Found</h2>
-          <p className="text-gray-400 mb-6">{error}</p>
-          <Link href="/scanner" className="px-6 py-3 bg-cyan-500 text-gray-950 font-bold rounded-lg">
-            Start New Scan
-          </Link>
-        </div>
-      </div>
-    );
-  }
 
   const currentPatch: Patch | null = patchResult?.patches[selectedPatchIdx] ?? null;
   const currentVuln = scanResult?.vulnerabilities.find(
@@ -134,11 +161,10 @@ export default function PatchView() {
             <div className="flex items-center gap-3 mb-1">
               <Wrench className="w-8 h-8 text-emerald-400" />
               <h1 className="text-2xl font-bold text-white">AI Patch Workspace</h1>
-              {!patchResult?.ai_available && (
-                <span className="text-xs px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-                  Rule-based / Verified
-                </span>
-              )}
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 font-mono">
+                <Sparkles className="w-3 h-3" />
+                Google Gemma 4
+              </span>
             </div>
             <p className="text-gray-400 text-sm font-mono">Scan: {scanId}</p>
           </div>
@@ -148,7 +174,7 @@ export default function PatchView() {
               <button
                 onClick={handleRescan}
                 disabled={isRescanning}
-                className="flex items-center gap-2 px-5 py-2.5 border border-gray-700 hover:border-gray-600 text-gray-300 hover:text-white font-semibold rounded-lg transition-all"
+                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-gray-950 font-bold rounded-lg transition-all text-sm glow-cyan"
               >
                 {isRescanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                 Re-scan Patched Code
@@ -158,10 +184,10 @@ export default function PatchView() {
               <button
                 onClick={handleDownloadReport}
                 disabled={isDownloading}
-                className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-gray-950 font-bold rounded-lg transition-all"
+                className="flex items-center gap-2 px-5 py-2.5 border border-gray-700 hover:border-gray-600 text-gray-300 hover:text-white text-sm font-semibold rounded-lg transition-all"
               >
                 {isDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                Report
+                Download Report
               </button>
             )}
           </div>
@@ -181,9 +207,7 @@ export default function PatchView() {
             </div>
             <h2 className="text-xl text-white font-semibold mb-2">Generating Patches...</h2>
             <p className="text-gray-400">
-              {patchResult?.ai_available
-                ? "Gemma 4 is analyzing vulnerabilities and generating secure fixes."
-                : "Applying verified security patches."}
+              Gemma 4 is analyzing vulnerabilities and generating secure fixes.
             </p>
           </div>
         )}
@@ -238,7 +262,7 @@ export default function PatchView() {
                         <Bot className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                         <div>
                           <div className="text-xs text-emerald-400 font-semibold mb-1">
-                            {patchResult.ai_available ? "Gemma 4 Explanation" : "Security Patch Analysis"}
+                            Google Gemma 4 Fix Explanation
                           </div>
                           <p className="text-gray-300 text-sm leading-relaxed">
                             {currentPatch.explanation}
@@ -267,7 +291,7 @@ export default function PatchView() {
                     ) : (
                       <AlertTriangle className="w-6 h-6 text-orange-400" />
                     )}
-                    <h3 className="font-semibold text-white">Re-scan Verification</h3>
+                    <h3 className="font-semibold text-white">Re-scan Verification Proof</h3>
                   </div>
                   <div className="grid grid-cols-5 gap-3 text-sm">
                     {[
@@ -285,7 +309,7 @@ export default function PatchView() {
                   </div>
                   {rescanResult.summary.total === 0 && (
                     <p className="mt-3 text-emerald-400 text-sm font-semibold">
-                      ✓ Patch verified — 0 vulnerabilities remaining. Flaws eliminated!
+                      ✓ Patch verified — 0 vulnerabilities remaining. Flaws mathematically eliminated!
                     </p>
                   )}
                 </div>

@@ -38,7 +38,7 @@ export default function Navbar() {
           {/* Right side */}
           <div className="ml-auto flex items-center gap-3">
             <a
-              href="https://github.com/your-username/patchpilot"
+              href="https://github.com/Swastikvitthare/PatchPilot"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-gray-400 hover:text-white border border-gray-800 hover:border-gray-700 transition-all text-sm"

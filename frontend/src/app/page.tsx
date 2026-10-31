@@ -130,8 +130,15 @@ export default function LandingPage() {
               className="inline-flex items-center gap-2 px-8 py-4 bg-cyan-500 hover:bg-cyan-400 text-gray-950 font-bold rounded-lg transition-all duration-200 glow-cyan text-lg"
             >
               <Shield className="w-5 h-5" />
-              Start Scanning
+              Launch Scanner
               <ArrowRight className="w-5 h-5" />
+            </Link>
+            <Link
+              href="/scanner?demo=true"
+              className="inline-flex items-center gap-2 px-8 py-4 border border-cyan-500/40 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 hover:text-cyan-300 font-semibold rounded-lg transition-all duration-200 text-lg"
+            >
+              <Zap className="w-5 h-5" />
+              Live Interactive Demo
             </Link>
             <Link
               href="/dashboard"

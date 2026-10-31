@@ -29,7 +29,7 @@ export default function Footer() {
             <Link href="/dashboard" className="hover:text-gray-300 transition-colors">Dashboard</Link>
             <Link href="/scanner" className="hover:text-gray-300 transition-colors">Scanner</Link>
             <a
-              href="https://github.com/your-username/patchpilot"
+              href="https://github.com/Swastikvitthare/PatchPilot"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-gray-300 transition-colors"

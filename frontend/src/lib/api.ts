@@ -10,6 +10,13 @@ import { clientScan, clientPatch, clientReportBlob } from "./client-scanner";
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+function shouldUseClientFallback(): boolean {
+  if (typeof window === "undefined") return false;
+  // If hosted on HTTPS (like GitHub Pages) and API_URL points to localhost HTTP,
+  // browsers strictly block mixed active content. Fall back immediately with 0 delay.
+  return window.location.protocol === "https:" && API_URL.startsWith("http://localhost");
+}
+
 // ---------------------------------------------------------------------------
 // Generic fetch helper with fallback awareness
 // ---------------------------------------------------------------------------
@@ -18,8 +25,12 @@ async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
+  if (shouldUseClientFallback()) {
+    throw new Error("Mixed content prevented HTTP localhost fetch on HTTPS static host");
+  }
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s timeout for auto-fallback
+  const timeoutId = setTimeout(() => controller.abort(), 2500);
 
   try {
     const res = await fetch(`${API_URL}${path}`, {
@@ -112,6 +123,9 @@ export async function rescanCode(
 }
 
 export async function generateReport(request: ReportRequest): Promise<Blob> {
+  if (shouldUseClientFallback()) {
+    return clientReportBlob(request);
+  }
   try {
     const res = await fetch(`${API_URL}/report`, {
       method: "POST",

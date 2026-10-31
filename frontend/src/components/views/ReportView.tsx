@@ -5,7 +5,10 @@ import Link from "next/link";
 import { FileText, ChevronLeft, Download, Loader2, XCircle, CheckCircle, AlertTriangle } from "lucide-react";
 import { ScanResult, PatchResult } from "@/lib/types";
 import { generateReport } from "@/lib/api";
+import { clientScan, clientPatch } from "@/lib/client-scanner";
 import SeverityBadge from "@/components/results/SeverityBadge";
+
+const DEMO_CODE = `import os\nimport pickle\n\nDB_PASSWORD = "admin123!supersecret"\n\ndef get_user(u):\n    return cursor.execute(f"SELECT * FROM users WHERE name = '{u}'")\n`;
 
 export default function ReportView() {
   const params = useParams();
@@ -18,13 +21,19 @@ export default function ReportView() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem(`scan_${scanId}`);
-    const code = sessionStorage.getItem(`code_${scanId}`);
-    const patch = sessionStorage.getItem(`patch_${scanId}`);
+    const stored = sessionStorage.getItem(`scan_${scanId}`) || sessionStorage.getItem("scan_latest");
+    const code = sessionStorage.getItem(`code_${scanId}`) || sessionStorage.getItem("code_latest");
+    const patch = sessionStorage.getItem(`patch_${scanId}`) || sessionStorage.getItem("patch_latest");
     if (stored) setScanResult(JSON.parse(stored));
     if (code) setOriginalCode(code);
     if (patch) setPatchResult(JSON.parse(patch));
-    if (!stored) setError("Report data not found. Please complete a scan first.");
+    if (!stored) {
+      const demoScan = clientScan(DEMO_CODE, "python", "vulnerable_app.py");
+      const demoPatch = clientPatch(DEMO_CODE, demoScan.vulnerabilities, scanId);
+      setScanResult(demoScan);
+      setOriginalCode(DEMO_CODE);
+      setPatchResult(demoPatch);
+    }
   }, [scanId]);
 
   const handleDownload = async () => {
