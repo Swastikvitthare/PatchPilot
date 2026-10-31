@@ -1,0 +1,11 @@
+# Screenshots
+
+Place application screenshots here for the README and documentation.
+
+Recommended screenshots:
+- `landing.png` — Landing page
+- `dashboard.png` — Dashboard overview
+- `scanner.png` — Code scanner with Monaco editor
+- `results.png` — Vulnerability results
+- `patch.png` — AI patch workspace with diff view
+- `report.png` — Security report
