@@ -1,0 +1,1 @@
+self.__SSG_MANIFEST=new Set(["\u002Fpatch\u002F[id]","\u002Freport\u002F[id]","\u002Fresults\u002F[id]"]);self.__SSG_MANIFEST_CB&&self.__SSG_MANIFEST_CB()
