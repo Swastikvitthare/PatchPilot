@@ -1,344 +1,225 @@
-"""PDF report generator using ReportLab."""
-
-from __future__ import annotations
-
-import io
-import textwrap
-from datetime import datetime, timezone
-
+from datetime import datetime
+from typing import List, Optional
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import inch, mm
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
 from reportlab.platypus import (
-    BaseDocTemplate,
-    Frame,
-    PageTemplate,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-    Preformatted,
-    PageBreak,
-    HRFlowable,
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+    HRFlowable, KeepTogether,
 )
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from app.models import Vulnerability, Patch
 
-from app.models import Patch, Vulnerability
 
-_WIDTH, _HEIGHT = A4
-_MARGIN = 25 * mm
+# Brand colours
+CYBER_DARK = colors.HexColor("#0f172a")
+CYBER_CYAN = colors.HexColor("#06b6d4")
+CYBER_EMERALD = colors.HexColor("#10b981")
+CYBER_RED = colors.HexColor("#ef4444")
+CYBER_ORANGE = colors.HexColor("#f97316")
+CYBER_YELLOW = colors.HexColor("#eab308")
+CYBER_BLUE = colors.HexColor("#3b82f6")
+CYBER_GRAY = colors.HexColor("#6b7280")
+WHITE = colors.white
+LIGHT_GRAY = colors.HexColor("#f3f4f6")
+MID_GRAY = colors.HexColor("#e5e7eb")
 
-# Colour palette
-_BRAND_BLUE = colors.HexColor("#1e40af")
-_BRAND_LIGHT = colors.HexColor("#dbeafe")
-_SEVERITY_COLORS = {
-    "critical": colors.HexColor("#dc2626"),
-    "high": colors.HexColor("#ea580c"),
-    "medium": colors.HexColor("#ca8a04"),
-    "low": colors.HexColor("#2563eb"),
-    "info": colors.HexColor("#6b7280"),
+SEVERITY_COLORS = {
+    "critical": CYBER_RED,
+    "high": CYBER_ORANGE,
+    "medium": CYBER_YELLOW,
+    "low": CYBER_BLUE,
+    "info": CYBER_GRAY,
 }
 
 
-def _severity_color(sev: str) -> colors.Color:
-    return _SEVERITY_COLORS.get(sev.lower(), colors.grey)
-
-
 class ReportGenerator:
-    """Generate a professional PDF security report."""
+    """Generates professional PDF security reports with ReportLab."""
 
     def generate_pdf(
         self,
         scan_id: str,
         original_code: str,
-        patched_code: str | None,
-        vulnerabilities: list[Vulnerability],
-        patches: list[Patch] | None,
+        patched_code: Optional[str],
+        vulnerabilities: List[Vulnerability],
+        patches: List[Patch],
     ) -> bytes:
-        """Return the PDF as raw bytes."""
-        buf = io.BytesIO()
+        from io import BytesIO
+        buf = BytesIO()
+
         doc = SimpleDocTemplate(
             buf,
             pagesize=A4,
-            leftMargin=_MARGIN,
-            rightMargin=_MARGIN,
-            topMargin=_MARGIN,
-            bottomMargin=_MARGIN,
-            title="PatchPilot Security Report",
-            author="PatchPilot",
+            rightMargin=2 * cm,
+            leftMargin=2 * cm,
+            topMargin=2.5 * cm,
+            bottomMargin=2 * cm,
         )
 
         styles = getSampleStyleSheet()
-        self._register_custom_styles(styles)
+        story = []
 
-        story: list = []
-
-        # ── Title page ───────────────────────────────────────────────────
-        story.append(Spacer(1, 80))
-        story.append(Paragraph("PATCHPILOT", styles["ReportTitle"]))
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Security Analysis Report", styles["ReportSubtitle"]))
-        story.append(Spacer(1, 40))
-        story.append(HRFlowable(width="80%", color=_BRAND_BLUE, thickness=2))
-        story.append(Spacer(1, 20))
-
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        meta_data = [
-            ["Scan ID:", scan_id],
-            ["Generated:", now],
-            ["Total Findings:", str(len(vulnerabilities))],
-        ]
-        meta_table = Table(meta_data, colWidths=[120, 350])
-        meta_table.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 11),
-            ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ]))
-        story.append(meta_table)
-        story.append(PageBreak())
-
-        # ── Executive Summary ────────────────────────────────────────────
-        story.append(Paragraph("Executive Summary", styles["Heading1"]))
-        story.append(Spacer(1, 10))
-
-        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-        for v in vulnerabilities:
-            sev = v.severity.lower()
-            if sev in severity_counts:
-                severity_counts[sev] += 1
-
-        summary_text = (
-            f"PatchPilot identified <b>{len(vulnerabilities)}</b> security finding(s) in the "
-            f"submitted code. The breakdown by severity is shown below."
+        # ----------------------------------------------------------------
+        # Title Page
+        # ----------------------------------------------------------------
+        title_style = ParagraphStyle(
+            "PatchPilotTitle",
+            parent=styles["Title"],
+            fontSize=28,
+            textColor=CYBER_CYAN,
+            spaceAfter=6,
+            alignment=TA_CENTER,
         )
-        story.append(Paragraph(summary_text, styles["BodyJustified"]))
-        story.append(Spacer(1, 12))
+        subtitle_style = ParagraphStyle(
+            "PatchPilotSubtitle",
+            parent=styles["Normal"],
+            fontSize=12,
+            textColor=CYBER_GRAY,
+            alignment=TA_CENTER,
+            spaceAfter=4,
+        )
+        story.append(Spacer(1, 1.5 * cm))
+        story.append(Paragraph("PATCHPILOT", title_style))
+        story.append(Paragraph("Security Scan Report", subtitle_style))
+        story.append(Paragraph("Find the flaw. Fix the code. Prove the patch.", subtitle_style))
+        story.append(Spacer(1, 0.5 * cm))
+        story.append(HRFlowable(width="100%", thickness=2, color=CYBER_CYAN))
+        story.append(Spacer(1, 0.4 * cm))
 
-        sev_data = [["Severity", "Count"]]
-        sev_colors_list = []
-        for sev in ("critical", "high", "medium", "low", "info"):
-            count = severity_counts[sev]
-            sev_data.append([sev.upper(), str(count)])
-            sev_colors_list.append(_severity_color(sev))
+        meta_style = ParagraphStyle("Meta", parent=styles["Normal"], fontSize=9, textColor=CYBER_GRAY)
+        story.append(Paragraph(f"Scan ID: {scan_id}", meta_style))
+        story.append(Paragraph(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", meta_style))
+        story.append(Spacer(1, 1 * cm))
 
-        sev_table = Table(sev_data, colWidths=[200, 100])
-        sev_table_style = [
-            ("BACKGROUND", (0, 0), (-1, 0), _BRAND_BLUE),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        # ----------------------------------------------------------------
+        # Executive Summary
+        # ----------------------------------------------------------------
+        h1 = ParagraphStyle("H1", parent=styles["Heading1"], fontSize=14,
+                             textColor=CYBER_CYAN, spaceAfter=8, spaceBefore=12)
+        story.append(Paragraph("Executive Summary", h1))
+
+        total = len(vulnerabilities)
+        critical = sum(1 for v in vulnerabilities if v.severity == "critical")
+        high = sum(1 for v in vulnerabilities if v.severity == "high")
+        medium = sum(1 for v in vulnerabilities if v.severity == "medium")
+        low = sum(1 for v in vulnerabilities if v.severity == "low")
+        info = sum(1 for v in vulnerabilities if v.severity == "info")
+        patched_count = len(patches)
+
+        summary_data = [
+            ["Metric", "Count"],
+            ["Total Vulnerabilities", str(total)],
+            ["Critical", str(critical)],
+            ["High", str(high)],
+            ["Medium", str(medium)],
+            ["Low", str(low)],
+            ["Info", str(info)],
+            ["Patches Generated", str(patched_count)],
+        ]
+
+        summary_table = Table(summary_data, colWidths=[9 * cm, 4 * cm])
+        summary_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), CYBER_DARK),
+            ("TEXTCOLOR", (0, 0), (-1, 0), CYBER_CYAN),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, -1), 10),
             ("ALIGN", (1, 0), (1, -1), "CENTER"),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ]
-        for i, c in enumerate(sev_colors_list, start=1):
-            sev_table_style.append(("TEXTCOLOR", (0, i), (0, i), c))
-            sev_table_style.append(("FONTNAME", (0, i), (0, i), "Helvetica-Bold"))
-        sev_table.setStyle(TableStyle(sev_table_style))
-        story.append(sev_table)
-        story.append(Spacer(1, 20))
+            ("GRID", (0, 0), (-1, -1), 0.5, MID_GRAY),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [LIGHT_GRAY, WHITE]),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        story.append(summary_table)
+        story.append(Spacer(1, 0.8 * cm))
 
-        # ── Vulnerability Details ────────────────────────────────────────
+        # ----------------------------------------------------------------
+        # Vulnerability Details
+        # ----------------------------------------------------------------
         if vulnerabilities:
-            story.append(Paragraph("Vulnerability Details", styles["Heading1"]))
-            story.append(Spacer(1, 10))
+            story.append(Paragraph("Vulnerability Details", h1))
+            h2 = ParagraphStyle("H2", parent=styles["Heading2"], fontSize=11,
+                                 textColor=CYBER_DARK, spaceAfter=4, spaceBefore=10)
+            body = ParagraphStyle("Body", parent=styles["Normal"], fontSize=9,
+                                  textColor=CYBER_DARK, spaceAfter=3)
+            code_style = ParagraphStyle("Code", parent=styles["Code"], fontSize=8,
+                                         textColor=CYBER_DARK, backColor=LIGHT_GRAY,
+                                         leftIndent=10, spaceAfter=4)
 
-            vuln_header = ["#", "Severity", "Title", "Line", "CWE"]
-            vuln_rows = [vuln_header]
-            for idx, v in enumerate(vulnerabilities, 1):
-                vuln_rows.append([
-                    str(idx),
-                    v.severity.upper(),
-                    self._truncate(v.title, 40),
-                    str(v.line_start),
-                    v.cwe_id or "—",
-                ])
+            for i, vuln in enumerate(vulnerabilities, 1):
+                sev_color = SEVERITY_COLORS.get(vuln.severity, CYBER_GRAY)
+                vuln_block = []
 
-            vuln_table = Table(vuln_rows, colWidths=[30, 70, 230, 50, 80])
-            vuln_table_style = [
-                ("BACKGROUND", (0, 0), (-1, 0), _BRAND_BLUE),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, _BRAND_LIGHT]),
-            ]
-            # Colour-code severity column
-            for i, v in enumerate(vulnerabilities, 1):
-                vuln_table_style.append(
-                    ("TEXTCOLOR", (1, i), (1, i), _severity_color(v.severity))
-                )
-                vuln_table_style.append(
-                    ("FONTNAME", (1, i), (1, i), "Helvetica-Bold")
-                )
-            vuln_table.setStyle(TableStyle(vuln_table_style))
-            story.append(vuln_table)
-            story.append(Spacer(1, 20))
-
-            # Per-vulnerability detail
-            for idx, v in enumerate(vulnerabilities, 1):
-                story.append(Paragraph(
-                    f"Finding #{idx}: {self._esc(v.title)}",
-                    styles["Heading2"],
+                vuln_block.append(Paragraph(
+                    f"{i}. [{vuln.severity.upper()}] {vuln.title}",
+                    ParagraphStyle("VH", parent=h2, textColor=sev_color),
                 ))
-                story.append(Spacer(1, 4))
-
-                detail_items = [
-                    f"<b>Severity:</b> {v.severity.upper()}",
-                    f"<b>Category:</b> {self._esc(v.category)}",
-                    f"<b>CWE:</b> {v.cwe_id or '—'}",
-                    f"<b>File:</b> {self._esc(v.file)} (line {v.line_start})",
-                    f"<b>Description:</b> {self._esc(v.description)}",
-                ]
-                for item in detail_items:
-                    story.append(Paragraph(item, styles["BodyText"]))
-                    story.append(Spacer(1, 2))
-
-                if v.code_snippet:
-                    story.append(Spacer(1, 4))
-                    story.append(Paragraph("<b>Vulnerable Code:</b>", styles["BodyText"]))
-                    story.append(Spacer(1, 2))
-                    story.append(Preformatted(
-                        self._wrap_code(v.code_snippet),
-                        styles["CodeBlock"],
-                    ))
-
-                story.append(Spacer(1, 4))
-                story.append(Paragraph(
-                    f"<b>Recommendation:</b> {self._esc(v.recommendation)}",
-                    styles["BodyJustified"],
+                vuln_block.append(Paragraph(
+                    f"<b>Rule:</b> {vuln.rule_id} | <b>CWE:</b> {vuln.cwe_id or 'N/A'} | "
+                    f"<b>File:</b> {vuln.file} | <b>Lines:</b> {vuln.line_start}–{vuln.line_end}",
+                    body,
                 ))
+                vuln_block.append(Paragraph(f"<b>Description:</b> {vuln.description}", body))
+                vuln_block.append(Paragraph(f"<b>Recommendation:</b> {vuln.recommendation}", body))
 
-                # Show patch if available
-                if patches:
-                    matching = [p for p in patches if p.vulnerability_id == v.id]
-                    if matching:
-                        p = matching[0]
-                        story.append(Spacer(1, 6))
-                        story.append(Paragraph("<b>Suggested Fix:</b>", styles["BodyText"]))
-                        story.append(Preformatted(
-                            self._wrap_code(p.patched_code),
-                            styles["CodeBlockGreen"],
-                        ))
-                        story.append(Paragraph(
-                            f"<i>{self._esc(p.explanation)}</i>",
-                            styles["BodyText"],
-                        ))
+                if vuln.code_snippet:
+                    snippet_safe = vuln.code_snippet.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                    vuln_block.append(Paragraph(f"<b>Code Snippet:</b>", body))
+                    for line in snippet_safe.splitlines()[:10]:
+                        vuln_block.append(Paragraph(line or " ", code_style))
 
-                story.append(Spacer(1, 16))
-                story.append(HRFlowable(width="100%", color=colors.lightgrey, thickness=0.5))
-                story.append(Spacer(1, 10))
+                story.append(KeepTogether(vuln_block))
+                story.append(Spacer(1, 0.4 * cm))
 
-        # ── Code sections ────────────────────────────────────────────────
-        story.append(PageBreak())
-        story.append(Paragraph("Appendix: Source Code", styles["Heading1"]))
-        story.append(Spacer(1, 10))
+        # ----------------------------------------------------------------
+        # Patches Applied
+        # ----------------------------------------------------------------
+        if patches:
+            story.append(Paragraph("Security Patches", h1))
+            body = ParagraphStyle("Body2", parent=styles["Normal"], fontSize=9,
+                                  textColor=CYBER_DARK, spaceAfter=3)
+            code_style2 = ParagraphStyle("Code2", parent=styles["Code"], fontSize=8,
+                                          textColor=CYBER_DARK, backColor=LIGHT_GRAY,
+                                          leftIndent=10, spaceAfter=4)
 
-        story.append(Paragraph("<b>Original Code</b>", styles["Heading2"]))
-        story.append(Spacer(1, 4))
-        story.append(Preformatted(
-            self._wrap_code(original_code[:5000]),
-            styles["CodeBlock"],
+            for i, patch in enumerate(patches, 1):
+                conf_pct = int(patch.confidence * 100)
+                patch_block = []
+                patch_block.append(Paragraph(
+                    f"Patch {i} — Confidence: {conf_pct}%",
+                    ParagraphStyle("PH", parent=styles["Heading2"], fontSize=11,
+                                   textColor=CYBER_EMERALD, spaceAfter=4, spaceBefore=10),
+                ))
+                patch_block.append(Paragraph(f"<b>Explanation:</b> {patch.explanation}", body))
+
+                if patch.original_code != patch.patched_code:
+                    patch_block.append(Paragraph("<b>Original (vulnerable):</b>", body))
+                    for line in (patch.original_code or "")[:500].splitlines()[:8]:
+                        safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        patch_block.append(Paragraph(safe or " ", code_style2))
+
+                    patch_block.append(Paragraph("<b>Patched (secure):</b>", body))
+                    for line in (patch.patched_code or "")[:500].splitlines()[:8]:
+                        safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        patch_block.append(Paragraph(safe or " ", code_style2))
+
+                story.append(KeepTogether(patch_block))
+                story.append(Spacer(1, 0.4 * cm))
+
+        # ----------------------------------------------------------------
+        # Footer note
+        # ----------------------------------------------------------------
+        story.append(Spacer(1, 1 * cm))
+        story.append(HRFlowable(width="100%", thickness=1, color=CYBER_GRAY))
+        story.append(Spacer(1, 0.2 * cm))
+        footer_style = ParagraphStyle("Footer", parent=styles["Normal"], fontSize=8,
+                                       textColor=CYBER_GRAY, alignment=TA_CENTER)
+        story.append(Paragraph(
+            "Generated by PATCHPILOT · Powered by Google Gemma 4 · DigitalOcean Gradient",
+            footer_style,
         ))
 
-        if patched_code:
-            story.append(Spacer(1, 16))
-            story.append(Paragraph("<b>Patched Code</b>", styles["Heading2"]))
-            story.append(Spacer(1, 4))
-            story.append(Preformatted(
-                self._wrap_code(patched_code[:5000]),
-                styles["CodeBlockGreen"],
-            ))
-
-        # ── Build ────────────────────────────────────────────────────────
         doc.build(story)
         return buf.getvalue()
-
-    # ── helpers ──────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _register_custom_styles(styles):
-        styles.add(ParagraphStyle(
-            "ReportTitle",
-            parent=styles["Title"],
-            fontSize=32,
-            textColor=_BRAND_BLUE,
-            alignment=TA_CENTER,
-            spaceAfter=6,
-        ))
-        styles.add(ParagraphStyle(
-            "ReportSubtitle",
-            parent=styles["Normal"],
-            fontSize=16,
-            textColor=colors.grey,
-            alignment=TA_CENTER,
-            spaceAfter=20,
-        ))
-        styles.add(ParagraphStyle(
-            "BodyJustified",
-            parent=styles["BodyText"],
-            alignment=TA_JUSTIFY,
-            fontSize=10,
-            leading=14,
-        ))
-        styles.add(ParagraphStyle(
-            "CodeBlock",
-            fontName="Courier",
-            fontSize=7,
-            leading=9,
-            backColor=colors.HexColor("#f3f4f6"),
-            borderColor=colors.HexColor("#d1d5db"),
-            borderWidth=0.5,
-            borderPadding=6,
-            leftIndent=10,
-            rightIndent=10,
-            spaceAfter=8,
-        ))
-        styles.add(ParagraphStyle(
-            "CodeBlockGreen",
-            fontName="Courier",
-            fontSize=7,
-            leading=9,
-            backColor=colors.HexColor("#ecfdf5"),
-            borderColor=colors.HexColor("#6ee7b7"),
-            borderWidth=0.5,
-            borderPadding=6,
-            leftIndent=10,
-            rightIndent=10,
-            spaceAfter=8,
-        ))
-
-    @staticmethod
-    def _truncate(text: str, max_len: int) -> str:
-        return text if len(text) <= max_len else text[: max_len - 1] + "…"
-
-    @staticmethod
-    def _esc(text: str) -> str:
-        """Escape XML-special characters for ReportLab Paragraph."""
-        return (
-            text.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
-
-    @staticmethod
-    def _wrap_code(code: str, width: int = 95) -> str:
-        """Wrap long lines so they fit the PDF column."""
-        wrapped_lines: list[str] = []
-        for line in code.splitlines():
-            if len(line) > width:
-                wrapped_lines.extend(textwrap.wrap(line, width=width, subsequent_indent="    "))
-            else:
-                wrapped_lines.append(line)
-        return "\n".join(wrapped_lines)
-
-
-# Module-level singleton
-report_generator = ReportGenerator()

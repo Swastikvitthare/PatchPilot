@@ -1,233 +1,150 @@
 "use client";
-
 import { useState, useCallback } from "react";
-import {
-  ScanResult,
-  PatchResult,
-  Vulnerability,
-  ScanStatus,
-  PatchStatus,
-} from "@/lib/types";
-import {
-  scanCode,
-  generatePatches,
-  rescanCode,
-  generateReport,
-  downloadBlob,
-} from "@/lib/api";
+import { ScanResult, PatchResult, Vulnerability } from "@/lib/types";
+import { scanCode, generatePatches, rescanCode, generateReport } from "@/lib/api";
 
-interface UseScannerReturn {
+interface ScannerState {
   code: string;
-  setCode: (code: string) => void;
   language: string;
-  setLanguage: (lang: string) => void;
   filename: string;
-  setFilename: (name: string) => void;
   scanResult: ScanResult | null;
-  setScanResult: (result: ScanResult | null) => void;
   patchResult: PatchResult | null;
-  setPatchResult: (result: PatchResult | null) => void;
   rescanResult: ScanResult | null;
-  scanStatus: ScanStatus;
-  patchStatus: PatchStatus;
+  isScanning: boolean;
+  isPatching: boolean;
+  isRescanning: boolean;
   error: string | null;
-  scan: () => Promise<ScanResult | null>;
-  patch: (vulnerabilities?: Vulnerability[]) => Promise<PatchResult | null>;
-  rescan: (patchedCode: string) => Promise<ScanResult | null>;
-  downloadReport: () => Promise<void>;
-  clearError: () => void;
-  reset: () => void;
 }
 
-export function useScanner(): UseScannerReturn {
-  const [code, setCode] = useState("");
-  const [language, setLanguage] = useState("python");
-  const [filename, setFilename] = useState("");
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-  const [patchResult, setPatchResult] = useState<PatchResult | null>(null);
-  const [rescanResult, setRescanResult] = useState<ScanResult | null>(null);
-  const [scanStatus, setScanStatus] = useState<ScanStatus>("idle");
-  const [patchStatus, setPatchStatus] = useState<PatchStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+export function useScanner() {
+  const [state, setState] = useState<ScannerState>({
+    code: "",
+    language: "python",
+    filename: "uploaded_code.py",
+    scanResult: null,
+    patchResult: null,
+    rescanResult: null,
+    isScanning: false,
+    isPatching: false,
+    isRescanning: false,
+    error: null,
+  });
 
-  const clearError = useCallback(() => setError(null), []);
+  const setCode = useCallback((code: string) => {
+    setState((s) => ({ ...s, code, error: null }));
+  }, []);
+
+  const setLanguage = useCallback((language: string) => {
+    setState((s) => ({ ...s, language }));
+  }, []);
+
+  const setFilename = useCallback((filename: string) => {
+    setState((s) => ({ ...s, filename }));
+  }, []);
 
   const scan = useCallback(async (): Promise<ScanResult | null> => {
-    if (!code.trim()) {
-      setError("Please enter some code to scan.");
+    if (!state.code.trim()) {
+      setState((s) => ({ ...s, error: "Please enter code before scanning." }));
       return null;
     }
-    setScanStatus("scanning");
-    setError(null);
-    setScanResult(null);
-    setPatchResult(null);
-    setRescanResult(null);
-
+    setState((s) => ({ ...s, isScanning: true, error: null, scanResult: null }));
     try {
-      const result = await scanCode(code, language, filename || undefined);
-      setScanResult(result);
-      setScanStatus("complete");
-
-      // Store in sessionStorage
-      sessionStorage.setItem(
-        `scan_${result.scan_id}`,
-        JSON.stringify({
-          scanResult: result,
-          code,
-          language,
-          timestamp: new Date().toISOString(),
-        })
-      );
-
-      // Store in recent scans list
-      const recentScans = JSON.parse(
-        sessionStorage.getItem("recent_scans") || "[]"
-      );
-      recentScans.unshift({
-        scan_id: result.scan_id,
-        filename: filename || "untitled",
-        language,
-        total_vulns: result.summary.total,
-        critical: result.summary.critical,
-        high: result.summary.high,
-        scanned_at: result.scanned_at,
-      });
-      sessionStorage.setItem(
-        "recent_scans",
-        JSON.stringify(recentScans.slice(0, 20))
-      );
-
+      const result = await scanCode(state.code, state.language, state.filename);
+      setState((s) => ({ ...s, scanResult: result, isScanning: false }));
+      // Persist for cross-page access
+      sessionStorage.setItem(`scan_${result.scan_id}`, JSON.stringify(result));
+      sessionStorage.setItem(`code_${result.scan_id}`, state.code);
       return result;
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Scan failed. Please try again.";
-      setError(message);
-      setScanStatus("error");
+      const msg = err instanceof Error ? err.message : "Scan failed.";
+      setState((s) => ({ ...s, error: msg, isScanning: false }));
       return null;
     }
-  }, [code, language, filename]);
+  }, [state.code, state.language, state.filename]);
 
   const patch = useCallback(
-    async (
-      vulnerabilities?: Vulnerability[]
-    ): Promise<PatchResult | null> => {
+    async (vulns?: Vulnerability[]): Promise<PatchResult | null> => {
+      const { scanResult } = state;
       if (!scanResult) {
-        setError("No scan results available. Please scan first.");
+        setState((s) => ({ ...s, error: "Run a scan before generating patches." }));
         return null;
       }
-      setPatchStatus("patching");
-      setError(null);
-
-      const vulns = vulnerabilities || scanResult.vulnerabilities;
-
+      setState((s) => ({ ...s, isPatching: true, error: null }));
       try {
-        const result = await generatePatches(code, vulns, scanResult.scan_id);
-        setPatchResult(result);
-        setPatchStatus("complete");
-
-        // Store patch result
-        sessionStorage.setItem(
-          `patch_${scanResult.scan_id}`,
-          JSON.stringify({
-            patchResult: result,
-            scanResult,
-            originalCode: code,
-            timestamp: new Date().toISOString(),
-          })
+        const result = await generatePatches(
+          state.code,
+          vulns ?? scanResult.vulnerabilities,
+          scanResult.scan_id
         );
-
+        setState((s) => ({ ...s, patchResult: result, isPatching: false }));
+        sessionStorage.setItem(`patch_${scanResult.scan_id}`, JSON.stringify(result));
         return result;
       } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Patch generation failed. Please try again.";
-        setError(message);
-        setPatchStatus("error");
+        const msg = err instanceof Error ? err.message : "Patch generation failed.";
+        setState((s) => ({ ...s, error: msg, isPatching: false }));
         return null;
       }
     },
-    [code, scanResult]
+    [state]
   );
 
-  const rescan = useCallback(
-    async (patchedCode: string): Promise<ScanResult | null> => {
-      setError(null);
-      try {
-        const result = await rescanCode(patchedCode, language);
-        setRescanResult(result);
-        return result;
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : "Re-scan failed. Please try again.";
-        setError(message);
-        return null;
-      }
-    },
-    [language]
-  );
+  const rescan = useCallback(async (): Promise<ScanResult | null> => {
+    const { patchResult } = state;
+    if (!patchResult) {
+      setState((s) => ({ ...s, error: "Generate patches before re-scanning." }));
+      return null;
+    }
+    setState((s) => ({ ...s, isRescanning: true, error: null }));
+    try {
+      const result = await rescanCode(patchResult.patched_code_full, state.language);
+      setState((s) => ({ ...s, rescanResult: result, isRescanning: false }));
+      return result;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Re-scan failed.";
+      setState((s) => ({ ...s, error: msg, isRescanning: false }));
+      return null;
+    }
+  }, [state]);
 
-  const downloadReportFn = useCallback(async (): Promise<void> => {
+  const downloadReport = useCallback(async (): Promise<void> => {
+    const { scanResult, patchResult } = state;
     if (!scanResult) {
-      setError("No scan results available.");
+      setState((s) => ({ ...s, error: "No scan result to report on." }));
       return;
     }
-    setError(null);
     try {
       const blob = await generateReport({
         scan_id: scanResult.scan_id,
-        original_code: code,
-        patched_code: patchResult?.patched_code,
+        original_code: state.code,
+        patched_code: patchResult?.patched_code_full,
         vulnerabilities: scanResult.vulnerabilities,
         patches: patchResult?.patches,
       });
-      downloadBlob(
-        blob,
-        `patchpilot-report-${scanResult.scan_id.slice(0, 8)}.pdf`
-      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `patchpilot-report-${scanResult.scan_id.slice(0, 8)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (err: unknown) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Report download failed. Please try again.";
-      setError(message);
+      const msg = err instanceof Error ? err.message : "Report generation failed.";
+      setState((s) => ({ ...s, error: msg }));
     }
-  }, [code, scanResult, patchResult]);
+  }, [state]);
 
-  const reset = useCallback(() => {
-    setCode("");
-    setLanguage("python");
-    setFilename("");
-    setScanResult(null);
-    setPatchResult(null);
-    setRescanResult(null);
-    setScanStatus("idle");
-    setPatchStatus("idle");
-    setError(null);
+  const clearError = useCallback(() => {
+    setState((s) => ({ ...s, error: null }));
   }, []);
 
   return {
-    code,
+    ...state,
     setCode,
-    language,
     setLanguage,
-    filename,
     setFilename,
-    scanResult,
-    setScanResult,
-    patchResult,
-    setPatchResult,
-    rescanResult,
-    scanStatus,
-    patchStatus,
-    error,
     scan,
     patch,
     rescan,
-    downloadReport: downloadReportFn,
+    downloadReport,
     clearError,
-    reset,
   };
 }

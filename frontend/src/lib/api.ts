@@ -1,141 +1,131 @@
 import {
   ScanResult,
   PatchResult,
-  ScanResult as ScanResultType,
   ReportRequest,
   Vulnerability,
   HealthResponse,
 } from "./types";
+import { clientScan, clientPatch, clientReportBlob } from "./client-scanner";
 
 const API_URL =
-  typeof window !== "undefined"
-    ? (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api")
-    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api");
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
-class ApiError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
-}
+// ---------------------------------------------------------------------------
+// Generic fetch helper with fallback awareness
+// ---------------------------------------------------------------------------
 
-async function request<T>(
-  endpoint: string,
+async function apiFetch<T>(
+  path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${API_URL}${endpoint}`;
-  const config: RequestInit = {
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-    ...options,
-  };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 4000); // 4s timeout for auto-fallback
 
-  const response = await fetch(url, config);
+  try {
+    const res = await fetch(`${API_URL}${path}`, {
+      headers: { "Content-Type": "application/json", ...options.headers },
+      signal: controller.signal,
+      ...options,
+    });
+    clearTimeout(timeoutId);
 
-  if (!response.ok) {
-    let message = `API request failed: ${response.status} ${response.statusText}`;
-    try {
-      const errorBody = await response.json();
-      if (errorBody.detail) message = errorBody.detail;
-      else if (errorBody.message) message = errorBody.message;
-    } catch {
-      // use default message
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const body = await res.json();
+        detail = body?.detail || detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
     }
-    throw new ApiError(message, response.status);
-  }
 
-  return response.json();
+    return res.json() as Promise<T>;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
 }
 
-// ─── Scan ────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// API functions with seamless client-side fallback for GitHub Pages
+// ---------------------------------------------------------------------------
+
+export async function checkHealth(): Promise<HealthResponse> {
+  try {
+    return await apiFetch<HealthResponse>("/health");
+  } catch {
+    return {
+      status: "client_fallback",
+      version: "1.0.0",
+      ai_available: false,
+      scanners_available: ["sql_injection", "hardcoded_creds", "unsafe_eval", "python_static"],
+    };
+  }
+}
 
 export async function scanCode(
   code: string,
   language: string,
   filename?: string
 ): Promise<ScanResult> {
-  return request<ScanResult>("/scan", {
-    method: "POST",
-    body: JSON.stringify({ code, language, filename }),
-  });
+  try {
+    return await apiFetch<ScanResult>("/scan", {
+      method: "POST",
+      body: JSON.stringify({ code, language, filename }),
+    });
+  } catch (err) {
+    console.warn("Backend unavailable, using client-side security scanner fallback:", err);
+    return clientScan(code, language, filename);
+  }
 }
-
-// ─── Patch ───────────────────────────────────────────────────────────────────
 
 export async function generatePatches(
   code: string,
   vulnerabilities: Vulnerability[],
-  scanId: string
+  scan_id: string
 ): Promise<PatchResult> {
-  return request<PatchResult>("/patch", {
-    method: "POST",
-    body: JSON.stringify({
-      code,
-      vulnerabilities,
-      scan_id: scanId,
-    }),
-  });
+  try {
+    return await apiFetch<PatchResult>("/patch", {
+      method: "POST",
+      body: JSON.stringify({ code, vulnerabilities, scan_id }),
+    });
+  } catch (err) {
+    console.warn("Backend unavailable, using client-side patch generator fallback:", err);
+    return clientPatch(code, vulnerabilities, scan_id);
+  }
 }
-
-// ─── Rescan ──────────────────────────────────────────────────────────────────
 
 export async function rescanCode(
   code: string,
   language: string
-): Promise<ScanResultType> {
-  return request<ScanResultType>("/rescan", {
-    method: "POST",
-    body: JSON.stringify({ code, language }),
-  });
-}
-
-// ─── Report ──────────────────────────────────────────────────────────────────
-
-export async function generateReport(
-  reportRequest: ReportRequest
-): Promise<Blob> {
-  const url = `${API_URL}/report`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(reportRequest),
-  });
-
-  if (!response.ok) {
-    let message = `Report generation failed: ${response.status}`;
-    try {
-      const errorBody = await response.json();
-      if (errorBody.detail) message = errorBody.detail;
-    } catch {
-      // use default
-    }
-    throw new ApiError(message, response.status);
+): Promise<ScanResult> {
+  try {
+    return await apiFetch<ScanResult>("/rescan", {
+      method: "POST",
+      body: JSON.stringify({ code, language }),
+    });
+  } catch (err) {
+    console.warn("Backend unavailable, using client-side rescan fallback:", err);
+    return clientScan(code, language, "patched_code.py");
   }
-
-  return response.blob();
 }
 
-// ─── Health ──────────────────────────────────────────────────────────────────
+export async function generateReport(request: ReportRequest): Promise<Blob> {
+  try {
+    const res = await fetch(`${API_URL}/report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
 
-export async function checkHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>("/health", { method: "GET" });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    return await res.blob();
+  } catch (err) {
+    console.warn("Backend unavailable, generating client-side report download:", err);
+    return clientReportBlob(request);
+  }
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-export function downloadBlob(blob: Blob, filename: string) {
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(a);
-}
-
-export { ApiError };

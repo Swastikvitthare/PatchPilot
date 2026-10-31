@@ -1,53 +1,47 @@
-"""Gemma 4 API client – OpenAI-compatible chat completions endpoint."""
-
-from __future__ import annotations
-
 import logging
-
+from typing import Optional
 import httpx
+from app.config import get_settings
 
-from app.config import settings
-
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("patchpilot")
 
 
 class GemmaClient:
-    """Thin async wrapper around a Gemma 4 (or compatible) chat completions API."""
+    """HTTP client for Gemma 4 inference via DigitalOcean Gradient (OpenAI-compatible API)."""
 
-    def __init__(self) -> None:
-        self._api_url: str | None = settings.GEMMA_API_URL
-        self._api_key: str | None = settings.GEMMA_API_KEY
-        self._model: str = settings.GEMMA_MODEL
+    def __init__(self):
+        self._settings = get_settings()
 
     @property
     def is_available(self) -> bool:
-        """Return True when the API URL and key are both configured."""
-        return bool(self._api_url and self._api_key)
+        return self._settings.ai_available
 
-    async def generate(self, prompt: str, max_tokens: int = 2048) -> str | None:
-        """Send a chat-completion request and return the assistant's reply text.
-
-        Returns ``None`` on any failure (network, timeout, bad response) so callers
-        can fall back to rule-based behaviour.
+    async def generate(self, prompt: str, max_tokens: int = 2048) -> Optional[str]:
+        """
+        Send a prompt to Gemma 4 and return the response text.
+        Returns None if AI is unavailable or the request fails.
         """
         if not self.is_available:
-            logger.warning("Gemma client called but API URL/key not configured.")
+            logger.info("Gemma 4 not configured — skipping AI inference")
             return None
 
-        url = f"{self._api_url.rstrip('/')}/chat/completions"
+        endpoint = self._settings.gemma_api_url.rstrip("/") + "/chat/completions"
+
         headers = {
-            "Authorization": f"Bearer {self._api_key}",
+            "Authorization": f"Bearer {self._settings.gemma_api_key}",
             "Content-Type": "application/json",
         }
+
         payload = {
-            "model": self._model,
+            "model": self._settings.gemma_model,
             "messages": [
                 {
                     "role": "system",
                     "content": (
-                        "You are PatchPilot, an expert cybersecurity code-review assistant. "
-                        "You analyse vulnerabilities and produce concise, correct code patches. "
-                        "Reply ONLY with the requested output – no extra commentary."
+                        "You are a senior cybersecurity engineer. "
+                        "Your job is to analyze code vulnerabilities and provide clear, "
+                        "accurate security patches. Always provide working Python code. "
+                        "Be concise and technical."
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -57,25 +51,17 @@ class GemmaClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                choices = data.get("choices", [])
-                if choices:
-                    return choices[0].get("message", {}).get("content", "").strip()
-                logger.error("Gemma API returned no choices: %s", data)
-                return None
-        except httpx.TimeoutException:
-            logger.error("Gemma API request timed out.")
-            return None
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(endpoint, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
         except httpx.HTTPStatusError as exc:
-            logger.error("Gemma API HTTP error %s: %s", exc.response.status_code, exc.response.text[:500])
+            logger.error(f"Gemma API HTTP error: {exc.response.status_code} — {exc.response.text}")
             return None
-        except Exception:
-            logger.exception("Unexpected error calling Gemma API.")
+        except httpx.RequestError as exc:
+            logger.error(f"Gemma API request error: {exc}")
             return None
-
-
-# Module-level singleton
-gemma_client = GemmaClient()
+        except (KeyError, IndexError) as exc:
+            logger.error(f"Gemma API unexpected response format: {exc}")
+            return None

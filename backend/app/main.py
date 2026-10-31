@@ -1,78 +1,55 @@
-"""PATCHPILOT — FastAPI application entry point."""
-
-from __future__ import annotations
-
 import logging
-import sys
-
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers.scan import router as scan_router
-from app.routers.report import router as report_router
+from app.config import get_settings
+from app.routers import scanner, patcher, report
 
-load_dotenv()
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    stream=sys.stdout,
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("patchpilot")
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    logger.info("PATCHPILOT backend starting")
+    logger.info(f"AI available: {settings.ai_available}")
+    logger.info(f"CORS origins: {settings.cors_origins_list}")
+    yield
+    logger.info("PATCHPILOT backend shutting down")
+
+
 app = FastAPI(
-    title="PATCHPILOT",
-    description="AI-powered cybersecurity code scanner and auto-patcher",
+    title="PATCHPILOT API",
+    description="Find the flaw. Fix the code. Prove the patch.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
-# ------------------------------------------------------------------
-# CORS — allow everything during development
-# ------------------------------------------------------------------
+settings = get_settings()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ------------------------------------------------------------------
-# Routers
-# ------------------------------------------------------------------
-app.include_router(scan_router)
-app.include_router(report_router)
+app.include_router(scanner.router, prefix="/api")
+app.include_router(patcher.router, prefix="/api")
+app.include_router(report.router, prefix="/api")
 
 
-# ------------------------------------------------------------------
-# Health check
-# ------------------------------------------------------------------
-@app.get("/api/health", tags=["health"])
-async def health_check() -> dict:
-    """Return service health status."""
-    return {
-        "status": "healthy",
-        "service": "patchpilot",
-        "version": "1.0.0",
-    }
+from app.models import HealthResponse  # noqa: E402
 
-
-# ------------------------------------------------------------------
-# Startup banner
-# ------------------------------------------------------------------
-@app.on_event("startup")
-async def startup_banner() -> None:
-    banner = r"""
-    ╔═══════════════════════════════════════════════════╗
-    ║            ____       _       _     ____  _ _     ║
-    ║           |  _ \ __ _| |_ ___| |__ |  _ \(_) |   ║
-    ║           | |_) / _` | __/ __| '_ \| |_) | | |   ║
-    ║           |  __/ (_| | || (__| | | |  __/| | |   ║
-    ║           |_|   \__,_|\__\___|_| |_|_|   |_|_|   ║
-    ║                                                   ║
-    ║       AI-Powered Security Scanner & Patcher       ║
-    ╚═══════════════════════════════════════════════════╝
-    """
-    logger.info(banner)
-    logger.info("PATCHPILOT backend is up and running.")
+@app.get("/api/health", response_model=HealthResponse)
+async def health():
+    s = get_settings()
+    return HealthResponse(
+        status="ok",
+        version="1.0.0",
+        ai_available=s.ai_available,
+        scanners_available=["sql_injection", "hardcoded_creds", "unsafe_eval", "python_static"],
+    )

@@ -1,156 +1,165 @@
-"""Hardcoded credentials / secrets scanner – regex-based."""
-
-from __future__ import annotations
-
 import re
-import uuid
-
-from app.models import Vulnerability
+from typing import List, Tuple
+from app.models_core import Vulnerability
 from app.scanners.base import BaseScanner
 
-# ── Variable-name patterns that suggest secrets ─────────────────────────────
-_SECRET_VAR_NAMES = re.compile(
-    r"\b(?:password|passwd|pwd|secret|api_key|apikey|api_secret|"
-    r"access_key|secret_key|private_key|token|auth_token|"
-    r"access_token|refresh_token|session_key|db_password|"
-    r"database_password|mysql_pwd|encryption_key|signing_key|"
-    r"client_secret|app_secret)\b",
+# Variable name patterns that suggest credential storage
+CRED_VAR_PATTERN = re.compile(
+    r"\b(password|passwd|pwd|secret|api_key|apikey|api_secret|access_key|"
+    r"access_token|auth_token|private_key|client_secret|db_password|"
+    r"database_password|smtp_password|ftp_password|token|credential)\b",
     re.IGNORECASE,
 )
 
-# ── Specific credential patterns ────────────────────────────────────────────
-_CREDENTIAL_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
-    # AWS Access Key ID
-    (
-        re.compile(r"(?<![A-Z0-9])(AKIA[0-9A-Z]{16})(?![A-Z0-9])"),
-        "AWS Access Key ID detected",
-        "high",
-    ),
-    # AWS Secret Access Key (40-char base64)
-    (
-        re.compile(r"""(?:aws_secret_access_key|secret_key)\s*[:=]\s*['"]?([A-Za-z0-9/+=]{40})['"]?""", re.IGNORECASE),
-        "AWS Secret Access Key detected",
-        "critical",
-    ),
-    # Generic long hex string assigned to key-like variable
-    (
-        re.compile(
-            r"""(?:api[_-]?key|token|secret|password)\s*[:=]\s*['"]([0-9a-fA-F]{32,})['"]""",
-            re.IGNORECASE,
-        ),
-        "Long hex string assigned to a secret-like variable",
-        "high",
-    ),
-    # Generic long base64 string assigned to key-like variable
-    (
-        re.compile(
-            r"""(?:api[_-]?key|token|secret|password)\s*[:=]\s*['"]([A-Za-z0-9+/=]{32,})['"]""",
-            re.IGNORECASE,
-        ),
-        "Long base64 string assigned to a secret-like variable",
-        "high",
-    ),
-    # Private key files (PEM header)
-    (
-        re.compile(r"-----BEGIN\s+(RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"),
-        "Private key content embedded in source code",
-        "critical",
-    ),
-    # GitHub / GitLab / generic token patterns
-    (
-        re.compile(r"gh[pousr]_[A-Za-z0-9_]{36,}"),
-        "GitHub personal access token detected",
-        "critical",
-    ),
-    (
-        re.compile(r"glpat-[A-Za-z0-9\-_]{20,}"),
-        "GitLab personal access token detected",
-        "critical",
-    ),
-]
+# AWS Access Key pattern
+AWS_KEY_PATTERN = re.compile(r"\b(AKIA[0-9A-Z]{16})\b")
 
-# Pattern for simple assignment: var = "literal"
-_ASSIGNMENT_RE = re.compile(
-    r"""^[^#]*\b(\w+)\s*=\s*(['"])(.*?)\2""",
+# Generic high-entropy string pattern (hex, base64-ish, 20+ chars assigned to key variable)
+HIGH_ENTROPY_STRING = re.compile(r"""["']([A-Za-z0-9+/=_\-]{20,})["']""")
+
+# GitHub personal access token
+GITHUB_TOKEN_PATTERN = re.compile(r"\b(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82})\b")
+
+# Slack token
+SLACK_TOKEN_PATTERN = re.compile(r"\b(xox[baprs]-[0-9A-Za-z\-]{10,})\b")
+
+# Generic assignment: varname = "literal string"
+ASSIGNMENT_PATTERN = re.compile(
+    r"""^[ \t]*([\w]+)\s*=\s*["']([^"']{4,})["']""",
     re.MULTILINE,
 )
 
 
 class HardcodedCredsScanner(BaseScanner):
-    """Detect hardcoded credentials, API keys, and secrets."""
+    """Detects hardcoded credentials and secrets in source code."""
 
-    name = "hardcoded_creds"
-    description = "Detects hardcoded passwords, API keys, tokens, and embedded private keys"
+    @property
+    def name(self) -> str:
+        return "hardcoded_creds"
 
-    def scan(self, code: str, filename: str = "<input>") -> list[Vulnerability]:
-        vulns: list[Vulnerability] = []
+    def scan(self, code: str, filename: str) -> List[Vulnerability]:
+        vulns: List[Vulnerability] = []
         lines = code.splitlines()
 
-        # ── Check variable assignments against secret-name patterns ──────
-        for match in _ASSIGNMENT_RE.finditer(code):
-            var_name = match.group(1)
-            value = match.group(3)
-            if _SECRET_VAR_NAMES.search(var_name) and len(value) >= 1:
-                # Skip obviously safe placeholders
-                if value.lower() in ("", "none", "null", "todo", "changeme", "xxx", "your_password_here"):
-                    continue
-                # Skip os.environ / os.getenv patterns (already safe)
-                if "os.environ" in value or "os.getenv" in value:
-                    continue
+        # ----------------------------------------------------------------
+        # Pass 1: Line-by-line regex for credential variable assignments
+        # ----------------------------------------------------------------
+        for lineno, line in enumerate(lines, start=1):
+            m = ASSIGNMENT_PATTERN.search(line)
+            if m:
+                var_name = m.group(1)
+                value = m.group(2)
 
-                line_no = code[: match.start()].count("\n") + 1
-                snippet = lines[line_no - 1].strip() if line_no <= len(lines) else match.group(0)
-                vulns.append(
-                    Vulnerability(
-                        id=uuid.uuid4().hex,
-                        rule_id="CRED-001",
+                if CRED_VAR_PATTERN.search(var_name) and not self._is_placeholder(value):
+                    snippet = self._get_snippet(lines, lineno)
+                    vulns.append(Vulnerability(
+                        rule_id="CRED001",
                         severity="high",
-                        title="Hardcoded Credential",
-                        description=f"Variable '{var_name}' appears to contain a hardcoded secret.",
+                        title="Hardcoded Credential Detected",
+                        description=(
+                            f"Variable '{var_name}' appears to store a hardcoded credential. "
+                            "Hardcoded secrets in source code can be exposed via version control, "
+                            "logs, error messages, or code reviews."
+                        ),
                         file=filename,
-                        line_start=line_no,
-                        line_end=line_no,
+                        line_start=lineno,
+                        line_end=lineno,
                         code_snippet=snippet,
                         category="Hardcoded Credentials",
                         cwe_id="CWE-798",
                         recommendation=(
-                            "Move secrets to environment variables or a secrets manager. "
-                            "Use os.environ.get() or a .env file with python-dotenv."
+                            f"Replace with an environment variable: "
+                            f"{var_name} = os.environ.get('{var_name.upper()}', '')\n"
+                            "Add the variable to .env and never commit .env to version control."
                         ),
-                    )
-                )
+                    ))
 
-        # ── Check specific credential patterns ──────────────────────────
-        for line_no, line in enumerate(lines, start=1):
-            for pattern, desc, severity in _CREDENTIAL_PATTERNS:
-                if pattern.search(line):
-                    vulns.append(
-                        Vulnerability(
-                            id=uuid.uuid4().hex,
-                            rule_id="CRED-002",
-                            severity=severity,
-                            title="Embedded Secret / Key",
-                            description=desc,
-                            file=filename,
-                            line_start=line_no,
-                            line_end=line_no,
-                            code_snippet=line.strip(),
-                            category="Hardcoded Credentials",
-                            cwe_id="CWE-798",
-                            recommendation=(
-                                "Remove the secret from source code. Use environment variables, "
-                                "a vault service, or encrypted configuration files."
-                            ),
-                        )
-                    )
+            # ----------------------------------------------------------------
+            # AWS Access Key
+            # ----------------------------------------------------------------
+            if AWS_KEY_PATTERN.search(line):
+                snippet = self._get_snippet(lines, lineno)
+                vulns.append(Vulnerability(
+                    rule_id="CRED002",
+                    severity="critical",
+                    title="Hardcoded AWS Access Key",
+                    description=(
+                        "An AWS Access Key ID (AKIA...) is hardcoded in the source. "
+                        "Exposed AWS keys can lead to full cloud account compromise."
+                    ),
+                    file=filename,
+                    line_start=lineno,
+                    line_end=lineno,
+                    code_snippet=snippet,
+                    category="Hardcoded Credentials",
+                    cwe_id="CWE-798",
+                    recommendation=(
+                        "Remove the key immediately and rotate it in AWS IAM. "
+                        "Use AWS environment variables or IAM roles instead."
+                    ),
+                ))
 
-        # Deduplicate by (line, rule_id)
-        seen: set[tuple[int, str]] = set()
-        unique: list[Vulnerability] = []
-        for v in vulns:
-            key = (v.line_start, v.rule_id)
-            if key not in seen:
-                seen.add(key)
-                unique.append(v)
+            # ----------------------------------------------------------------
+            # GitHub Token
+            # ----------------------------------------------------------------
+            if GITHUB_TOKEN_PATTERN.search(line):
+                snippet = self._get_snippet(lines, lineno)
+                vulns.append(Vulnerability(
+                    rule_id="CRED003",
+                    severity="critical",
+                    title="Hardcoded GitHub Personal Access Token",
+                    description=(
+                        "A GitHub Personal Access Token is hardcoded. "
+                        "Exposed tokens allow unauthorized repository and API access."
+                    ),
+                    file=filename,
+                    line_start=lineno,
+                    line_end=lineno,
+                    code_snippet=snippet,
+                    category="Hardcoded Credentials",
+                    cwe_id="CWE-798",
+                    recommendation=(
+                        "Revoke this token immediately at github.com/settings/tokens. "
+                        "Use GitHub Secrets or environment variables."
+                    ),
+                ))
 
-        return unique
+            # ----------------------------------------------------------------
+            # Slack Token
+            # ----------------------------------------------------------------
+            if SLACK_TOKEN_PATTERN.search(line):
+                snippet = self._get_snippet(lines, lineno)
+                vulns.append(Vulnerability(
+                    rule_id="CRED004",
+                    severity="high",
+                    title="Hardcoded Slack Token",
+                    description=(
+                        "A Slack API token is hardcoded in the source code. "
+                        "Exposed Slack tokens can allow unauthorized access to workspace data."
+                    ),
+                    file=filename,
+                    line_start=lineno,
+                    line_end=lineno,
+                    code_snippet=snippet,
+                    category="Hardcoded Credentials",
+                    cwe_id="CWE-798",
+                    recommendation=(
+                        "Revoke the Slack token and store it in an environment variable."
+                    ),
+                ))
+
+        return vulns
+
+    def _is_placeholder(self, value: str) -> bool:
+        """Return True if the value looks like a placeholder, not a real secret."""
+        placeholders = {
+            "", "your_password_here", "your_secret_here", "changeme", "placeholder",
+            "xxxxx", "your_api_key", "password", "secret", "token", "replace_me",
+            "your_token", "YOUR_PASSWORD", "YOUR_SECRET", "YOUR_API_KEY",
+        }
+        return value.lower() in placeholders or value.startswith("<") and value.endswith(">")
+
+    def _get_snippet(self, lines: List[str], lineno: int, context: int = 2) -> str:
+        start = max(0, lineno - 1 - context)
+        end = min(len(lines), lineno + context)
+        return "\n".join(lines[start:end])

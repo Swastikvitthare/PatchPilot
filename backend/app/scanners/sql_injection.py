@@ -1,164 +1,175 @@
-"""SQL Injection scanner – regex + AST analysis."""
-
-from __future__ import annotations
-
 import ast
 import re
-import uuid
-
-from app.models import Vulnerability
+from typing import List
+from app.models_core import Vulnerability
 from app.scanners.base import BaseScanner
 
-# SQL keywords that start a dangerous statement
-_SQL_KW = r"(?:SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|REPLACE|TRUNCATE|MERGE|EXEC|EXECUTE)"
-
-# Patterns for string-concatenation SQL injection
-_CONCAT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    # "SELECT ... " + variable
-    (
-        re.compile(
-            rf"""(['"])\s*{_SQL_KW}\b[^'"]*\1\s*\+""",
-            re.IGNORECASE | re.DOTALL,
-        ),
-        "String concatenation in SQL query (+ operator)",
-    ),
-    # variable + "... SELECT ..."
-    (
-        re.compile(
-            rf"""\+\s*(['"])\s*{_SQL_KW}\b""",
-            re.IGNORECASE | re.DOTALL,
-        ),
-        "String concatenation in SQL query (+ operator, reversed)",
-    ),
-    # f-string with SQL keywords: f"SELECT ... {var} ..."
-    (
-        re.compile(
-            rf"""f(['"])\s*{_SQL_KW}\b[^'"]*\{{[^}}]+\}}""",
-            re.IGNORECASE | re.DOTALL,
-        ),
-        "f-string interpolation in SQL query",
-    ),
-    # .format() with SQL keywords
-    (
-        re.compile(
-            rf"""(['"])\s*{_SQL_KW}\b[^'"]*(?:\{{\w*\}})[^'"]*\1\s*\.format\s*\(""",
-            re.IGNORECASE | re.DOTALL,
-        ),
-        ".format() interpolation in SQL query",
-    ),
-    # %-formatting: "SELECT ... %s ..." % var
-    (
-        re.compile(
-            rf"""(['"])\s*{_SQL_KW}\b[^'"]*%[sd][^'"]*\1\s*%\s*""",
-            re.IGNORECASE | re.DOTALL,
-        ),
-        "%-formatting in SQL query",
-    ),
-]
+# SQL keywords that indicate a query string
+SQL_KEYWORDS = re.compile(
+    r"\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|REPLACE|EXEC|EXECUTE|UNION|FROM|WHERE)\b",
+    re.IGNORECASE,
+)
 
 
 class SQLInjectionScanner(BaseScanner):
-    """Detect potential SQL injection vulnerabilities using regex and AST."""
+    """Detects SQL injection vulnerabilities via AST analysis."""
 
-    name = "sql_injection"
-    description = "Detects SQL injection via string interpolation/concatenation in queries"
+    @property
+    def name(self) -> str:
+        return "sql_injection"
 
-    def scan(self, code: str, filename: str = "<input>") -> list[Vulnerability]:
-        vulns: list[Vulnerability] = []
-        lines = code.splitlines()
-
-        # ── Regex-based detection ────────────────────────────────────────
-        for line_no, line in enumerate(lines, start=1):
-            for pattern, desc in _CONCAT_PATTERNS:
-                if pattern.search(line):
-                    vulns.append(self._make_vuln(desc, line.strip(), line_no, filename))
-                    break  # one finding per line
-
-        # ── AST-based detection ──────────────────────────────────────────
+    def scan(self, code: str, filename: str) -> List[Vulnerability]:
+        vulns: List[Vulnerability] = []
         try:
-            tree = ast.parse(code, filename=filename)
+            tree = ast.parse(code)
         except SyntaxError:
             return vulns
 
+        lines = code.splitlines()
+
         for node in ast.walk(tree):
-            # Detect cursor.execute("SELECT ..." + var)
-            if isinstance(node, ast.Call):
-                func = node.func
-                if isinstance(func, ast.Attribute) and func.attr == "execute":
-                    if node.args:
-                        first_arg = node.args[0]
-                        if self._is_string_concat_sql(first_arg, code):
-                            line_no = getattr(node, "lineno", 1)
-                            snippet = lines[line_no - 1].strip() if line_no <= len(lines) else ""
-                            vulns.append(
-                                self._make_vuln(
-                                    "SQL query built with string concatenation passed to execute()",
-                                    snippet,
-                                    line_no,
-                                    filename,
-                                )
-                            )
+            # ----------------------------------------------------------------
+            # Detect: "SELECT ... " + variable  (BinOp with Add)
+            # ----------------------------------------------------------------
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+                concat_str = self._extract_string_from_binop(node)
+                if concat_str and SQL_KEYWORDS.search(concat_str):
+                    snippet = self._get_snippet(lines, node.lineno)
+                    vulns.append(Vulnerability(
+                        rule_id="SQL001",
+                        severity="critical",
+                        title="SQL Injection via String Concatenation",
+                        description=(
+                            "SQL query is constructed by concatenating user-controlled strings. "
+                            "An attacker can manipulate the query to read, modify, or delete data."
+                        ),
+                        file=filename,
+                        line_start=node.lineno,
+                        line_end=getattr(node, "end_lineno", node.lineno),
+                        code_snippet=snippet,
+                        category="SQL Injection",
+                        cwe_id="CWE-89",
+                        recommendation=(
+                            "Use parameterized queries or prepared statements. "
+                            "Example: cursor.execute('SELECT * FROM users WHERE id = %s', (user_id,))"
+                        ),
+                    ))
 
-            # Detect f-string JoinedStr in assignments containing SQL keywords
-            if isinstance(node, ast.Assign):
-                if isinstance(node.value, ast.JoinedStr):
-                    rendered = ast.get_source_segment(code, node.value) or ""
-                    if re.search(_SQL_KW, rendered, re.IGNORECASE):
-                        line_no = getattr(node, "lineno", 1)
-                        snippet = lines[line_no - 1].strip() if line_no <= len(lines) else ""
-                        vulns.append(
-                            self._make_vuln(
-                                "f-string SQL query assigned to variable",
-                                snippet,
-                                line_no,
-                                filename,
-                            )
-                        )
+            # ----------------------------------------------------------------
+            # Detect: f"SELECT ... {variable}"  (JoinedStr / f-string)
+            # ----------------------------------------------------------------
+            if isinstance(node, ast.JoinedStr):
+                fstr_value = self._extract_fstring_text(node)
+                if fstr_value and SQL_KEYWORDS.search(fstr_value):
+                    snippet = self._get_snippet(lines, node.lineno)
+                    vulns.append(Vulnerability(
+                        rule_id="SQL002",
+                        severity="critical",
+                        title="SQL Injection via f-String Interpolation",
+                        description=(
+                            "An f-string is used to build a SQL query with embedded variables. "
+                            "This allows attackers to inject arbitrary SQL."
+                        ),
+                        file=filename,
+                        line_start=node.lineno,
+                        line_end=getattr(node, "end_lineno", node.lineno),
+                        code_snippet=snippet,
+                        category="SQL Injection",
+                        cwe_id="CWE-89",
+                        recommendation=(
+                            "Replace f-string query construction with parameterized queries. "
+                            "Example: cursor.execute('SELECT * FROM users WHERE name = %s', (name,))"
+                        ),
+                    ))
 
-        # Deduplicate by line number
-        seen_lines: set[int] = set()
-        unique: list[Vulnerability] = []
-        for v in vulns:
-            if v.line_start not in seen_lines:
-                seen_lines.add(v.line_start)
-                unique.append(v)
+            # ----------------------------------------------------------------
+            # Detect: "SELECT ...".format(variable)  (Call with .format)
+            # ----------------------------------------------------------------
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "format"
+                and isinstance(node.func.value, ast.Constant)
+                and isinstance(node.func.value.value, str)
+                and SQL_KEYWORDS.search(node.func.value.value)
+            ):
+                snippet = self._get_snippet(lines, node.lineno)
+                vulns.append(Vulnerability(
+                    rule_id="SQL003",
+                    severity="critical",
+                    title="SQL Injection via .format() String Formatting",
+                    description=(
+                        "A SQL query string uses .format() to embed variables. "
+                        "Attackers can inject malicious SQL through the formatted values."
+                    ),
+                    file=filename,
+                    line_start=node.lineno,
+                    line_end=getattr(node, "end_lineno", node.lineno),
+                    code_snippet=snippet,
+                    category="SQL Injection",
+                    cwe_id="CWE-89",
+                    recommendation=(
+                        "Use parameterized queries instead of .format(). "
+                        "Example: cursor.execute('SELECT * FROM t WHERE id = %s', (val,))"
+                    ),
+                ))
 
-        return unique
+            # ----------------------------------------------------------------
+            # Detect: "SELECT ..." % variable  (BinOp with Mod = % formatting)
+            # ----------------------------------------------------------------
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
+                left_str = self._const_str(node.left)
+                if left_str and SQL_KEYWORDS.search(left_str):
+                    snippet = self._get_snippet(lines, node.lineno)
+                    vulns.append(Vulnerability(
+                        rule_id="SQL004",
+                        severity="critical",
+                        title="SQL Injection via % String Formatting",
+                        description=(
+                            "A SQL query uses Python's % operator to embed values directly. "
+                            "This is a classic SQL injection vector."
+                        ),
+                        file=filename,
+                        line_start=node.lineno,
+                        line_end=getattr(node, "end_lineno", node.lineno),
+                        code_snippet=snippet,
+                        category="SQL Injection",
+                        cwe_id="CWE-89",
+                        recommendation=(
+                            "Use parameterized queries. "
+                            "Example: cursor.execute('SELECT * FROM t WHERE id = %s', (val,))"
+                        ),
+                    ))
 
-    # ── helpers ──────────────────────────────────────────────────────────
+        return vulns
 
-    @staticmethod
-    def _is_string_concat_sql(node: ast.AST, code: str) -> bool:
-        """Return True if *node* looks like ``"SQL ..." + expr`` or ``f"SQL...{x}"``."""
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-            left_src = ast.get_source_segment(code, node.left) or ""
-            right_src = ast.get_source_segment(code, node.right) or ""
-            combined = left_src + right_src
-            if re.search(_SQL_KW, combined, re.IGNORECASE):
-                return True
-        if isinstance(node, ast.JoinedStr):
-            rendered = ast.get_source_segment(code, node) or ""
-            if re.search(_SQL_KW, rendered, re.IGNORECASE):
-                return True
-        return False
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
-    @staticmethod
-    def _make_vuln(description: str, snippet: str, line: int, filename: str) -> Vulnerability:
-        return Vulnerability(
-            id=uuid.uuid4().hex,
-            rule_id="SQL-INJ-001",
-            severity="high",
-            title="Potential SQL Injection",
-            description=description,
-            file=filename,
-            line_start=line,
-            line_end=line,
-            code_snippet=snippet,
-            category="SQL Injection",
-            cwe_id="CWE-89",
-            recommendation=(
-                "Use parameterized queries (placeholders) instead of string "
-                "concatenation or interpolation. For example, use "
-                "cursor.execute('SELECT * FROM users WHERE id = %s', (user_id,))."
-            ),
-        )
+    def _const_str(self, node: ast.expr) -> str:
+        """Return string value if node is a string constant, else ''."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        return ""
+
+    def _extract_string_from_binop(self, node: ast.BinOp) -> str:
+        """Try to extract any string literal embedded in a binary + chain."""
+        parts = []
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                parts.append(child.value)
+        return " ".join(parts)
+
+    def _extract_fstring_text(self, node: ast.JoinedStr) -> str:
+        """Extract the static text portions of an f-string."""
+        parts = []
+        for value in node.values:
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                parts.append(value.value)
+        return " ".join(parts)
+
+    def _get_snippet(self, lines: List[str], lineno: int, context: int = 2) -> str:
+        start = max(0, lineno - 1 - context)
+        end = min(len(lines), lineno + context)
+        return "\n".join(lines[start:end])

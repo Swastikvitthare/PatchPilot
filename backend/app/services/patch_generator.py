@@ -1,237 +1,287 @@
-"""Patch generator – AI-powered (Gemma 4) with rule-based fallback."""
-
-from __future__ import annotations
-
-import logging
 import re
+import logging
+from typing import List, Tuple
+from app.models_core import Vulnerability, Patch, PatchResult
+from app.services.gemma_client import GemmaClient
 
-from app.models import Patch, Vulnerability
-from app.services.gemma_client import gemma_client
-
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("patchpilot")
 
 
 class PatchGenerator:
-    """Generate code patches for detected vulnerabilities."""
+    """Generates security patches using Gemma 4 with rule-based fallback."""
+
+    def __init__(self):
+        self._client = GemmaClient()
 
     async def generate_patches(
-        self, code: str, vulnerabilities: list[Vulnerability]
-    ) -> tuple[list[Patch], str]:
-        """Return ``(patches, patched_full_code)``."""
-        patches: list[Patch] = []
+        self,
+        code: str,
+        vulnerabilities: List[Vulnerability],
+        scan_id: str,
+    ) -> PatchResult:
+        patches: List[Patch] = []
         patched_code = code
 
         for vuln in vulnerabilities:
-            if gemma_client.is_available:
+            if self._client.is_available:
                 patch = await self._ai_patch(code, vuln)
             else:
-                patch = None
-
-            if patch is None:
                 patch = self._rule_based_patch(code, vuln)
 
-            if patch is not None:
+            if patch:
                 patches.append(patch)
-                # Apply the patch to the running copy of the code
+                # Apply patch to accumulated patched code
                 if patch.original_code and patch.patched_code:
                     patched_code = patched_code.replace(
                         patch.original_code, patch.patched_code, 1
                     )
 
-        return patches, patched_code
-
-    # ── AI-based patching ────────────────────────────────────────────────
-
-    async def _ai_patch(self, code: str, vuln: Vulnerability) -> Patch | None:
-        prompt = (
-            f"The following Python code has a security vulnerability.\n\n"
-            f"**Vulnerability:** {vuln.title}\n"
-            f"**Description:** {vuln.description}\n"
-            f"**CWE:** {vuln.cwe_id or 'N/A'}\n"
-            f"**Line {vuln.line_start}:** `{vuln.code_snippet}`\n\n"
-            f"**Full code:**\n```python\n{code}\n```\n\n"
-            f"Respond in EXACTLY this format (no extra text):\n"
-            f"ORIGINAL:\n```\n<exact original vulnerable line(s)>\n```\n"
-            f"PATCHED:\n```\n<fixed replacement line(s)>\n```\n"
-            f"EXPLANATION:\n<one-paragraph explanation>\n"
-            f"CONFIDENCE: high|medium|low"
+        return PatchResult(
+            scan_id=scan_id,
+            patches=patches,
+            patched_code_full=patched_code,
+            ai_available=self._client.is_available,
         )
 
-        response = await gemma_client.generate(prompt)
+    # ------------------------------------------------------------------
+    # AI-powered patching
+    # ------------------------------------------------------------------
+
+    async def _ai_patch(self, code: str, vuln: Vulnerability) -> Patch:
+        prompt = f"""You are analyzing a Python security vulnerability.
+
+VULNERABILITY:
+- Title: {vuln.title}
+- Severity: {vuln.severity}
+- Category: {vuln.category}
+- CWE: {vuln.cwe_id or 'N/A'}
+- Lines {vuln.line_start}-{vuln.line_end}
+- Description: {vuln.description}
+
+CODE SNIPPET WITH VULNERABILITY:
+```python
+{vuln.code_snippet}
+```
+
+FULL FILE CODE:
+```python
+{code[:3000]}
+```
+
+Your task:
+1. Explain the vulnerability in 2-3 sentences.
+2. Provide the EXACT original vulnerable code snippet (copy from above).
+3. Provide the FIXED version of that exact snippet.
+4. Give a confidence score 0.0-1.0 for your fix.
+
+Respond in this EXACT format:
+EXPLANATION: <your explanation>
+ORIGINAL_CODE:
+```
+<exact vulnerable code>
+```
+PATCHED_CODE:
+```
+<fixed code>
+```
+CONFIDENCE: <0.0-1.0>"""
+
+        response = await self._client.generate(prompt, max_tokens=1024)
         if not response:
-            return None
+            return self._rule_based_patch(code, vuln)
 
         return self._parse_ai_response(response, vuln)
 
-    @staticmethod
-    def _parse_ai_response(text: str, vuln: Vulnerability) -> Patch | None:
-        """Parse the structured AI response into a Patch object."""
-        original_match = re.search(r"ORIGINAL:\s*```\s*\n?(.*?)```", text, re.DOTALL)
-        patched_match = re.search(r"PATCHED:\s*```\s*\n?(.*?)```", text, re.DOTALL)
-        explanation_match = re.search(r"EXPLANATION:\s*(.+?)(?=CONFIDENCE:|$)", text, re.DOTALL)
-        confidence_match = re.search(r"CONFIDENCE:\s*(high|medium|low)", text, re.IGNORECASE)
+    def _parse_ai_response(self, response: str, vuln: Vulnerability) -> Patch:
+        """Parse structured AI response into a Patch object."""
+        explanation = ""
+        original_code = vuln.code_snippet
+        patched_code = vuln.code_snippet
+        confidence = 0.7
 
-        original = original_match.group(1).strip() if original_match else vuln.code_snippet
-        patched = patched_match.group(1).strip() if patched_match else ""
-        explanation = explanation_match.group(1).strip() if explanation_match else "AI-generated fix."
-        confidence = confidence_match.group(1).lower() if confidence_match else "medium"
+        try:
+            # Extract EXPLANATION
+            exp_match = re.search(r"EXPLANATION:\s*(.+?)(?=ORIGINAL_CODE:|$)", response, re.DOTALL)
+            if exp_match:
+                explanation = exp_match.group(1).strip()
 
-        if not patched:
-            return None
+            # Extract ORIGINAL_CODE
+            orig_match = re.search(r"ORIGINAL_CODE:\s*```(?:python)?\n?(.*?)```", response, re.DOTALL)
+            if orig_match:
+                original_code = orig_match.group(1).strip()
+
+            # Extract PATCHED_CODE
+            patch_match = re.search(r"PATCHED_CODE:\s*```(?:python)?\n?(.*?)```", response, re.DOTALL)
+            if patch_match:
+                patched_code = patch_match.group(1).strip()
+
+            # Extract CONFIDENCE
+            conf_match = re.search(r"CONFIDENCE:\s*([\d.]+)", response)
+            if conf_match:
+                confidence = float(conf_match.group(1))
+                confidence = max(0.0, min(1.0, confidence))
+
+        except Exception as exc:
+            logger.warning(f"Failed to parse AI response: {exc}")
+            explanation = response[:500]
+
+        if not explanation:
+            explanation = vuln.description
 
         return Patch(
             vulnerability_id=vuln.id,
-            original_code=original,
-            patched_code=patched,
+            original_code=original_code,
+            patched_code=patched_code,
             explanation=explanation,
             confidence=confidence,
         )
 
-    # ── Rule-based fallback patching ─────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Rule-based fallback patches
+    # ------------------------------------------------------------------
 
-    def _rule_based_patch(self, code: str, vuln: Vulnerability) -> Patch | None:
-        """Generate a simple deterministic patch based on the vulnerability type."""
+    def _rule_based_patch(self, code: str, vuln: Vulnerability) -> Patch:
+        rule_id = vuln.rule_id
         snippet = vuln.code_snippet
-        if not snippet:
-            return None
 
-        handler = self._RULE_HANDLERS.get(vuln.category)
-        if handler:
-            return handler(self, vuln, snippet)
-        return self._generic_patch(vuln, snippet)
+        if rule_id in ("SQL001", "SQL002", "SQL003", "SQL004"):
+            return Patch(
+                vulnerability_id=vuln.id,
+                original_code=snippet,
+                patched_code=self._fix_sql(snippet),
+                explanation=(
+                    f"{vuln.description}\n\n"
+                    "Rule-based fix: Replace string interpolation with a parameterized query. "
+                    "Pass user values as a tuple to cursor.execute(), never inline them into the SQL string."
+                ),
+                confidence=0.6,
+            )
 
-    def _patch_sql_injection(self, vuln: Vulnerability, snippet: str) -> Patch:
-        """Replace string concatenation SQL with parameterized placeholder."""
-        # Try to build a parameterised version
-        patched = snippet
-        # Replace f-string: f"SELECT ... {var}" → "SELECT ... %s", (var,)
-        fstring_match = re.search(r"""f(['"])(.*?)\{(\w+)\}(.*?)\1""", snippet)
-        if fstring_match:
-            q = fstring_match.group(1)
-            before = fstring_match.group(2)
-            var = fstring_match.group(3)
-            after = fstring_match.group(4)
-            patched = f'{q}{before}%s{after}{q}, ({var},)'
+        elif rule_id in ("CRED001", "CRED002", "CRED003", "CRED004"):
+            return Patch(
+                vulnerability_id=vuln.id,
+                original_code=snippet,
+                patched_code=self._fix_cred(snippet, vuln),
+                explanation=(
+                    f"{vuln.description}\n\n"
+                    "Rule-based fix: Replace the hardcoded value with an environment variable lookup. "
+                    "Store the real value in a .env file that is excluded from version control."
+                ),
+                confidence=0.75,
+            )
+
+        elif rule_id in ("EVAL001",):
+            return Patch(
+                vulnerability_id=vuln.id,
+                original_code=snippet,
+                patched_code=snippet.replace("eval(", "ast.literal_eval("),
+                explanation=(
+                    "Replace eval() with ast.literal_eval() which only evaluates Python literals "
+                    "(strings, numbers, lists, dicts, etc.) and raises ValueError for anything else. "
+                    "Add 'import ast' at the top of your file."
+                ),
+                confidence=0.8,
+            )
+
+        elif rule_id in ("EVAL002",):
+            return Patch(
+                vulnerability_id=vuln.id,
+                original_code=snippet,
+                patched_code="# REMOVED: exec() call — redesign to avoid dynamic code execution\n# " + snippet.replace("\n", "\n# "),
+                explanation=(
+                    "exec() has been commented out. Redesign the logic to use explicit function calls, "
+                    "a dispatch table (dict mapping names to functions), or a plugin architecture "
+                    "that does not require executing arbitrary strings as code."
+                ),
+                confidence=0.5,
+            )
+
+        elif rule_id in ("EVAL004",):
+            return Patch(
+                vulnerability_id=vuln.id,
+                original_code=snippet,
+                patched_code=snippet.replace("os.system(", "subprocess.run([").replace(")", "], shell=False, check=True)"),
+                explanation=(
+                    "Replace os.system() with subprocess.run() passing arguments as a list. "
+                    "This prevents shell injection because arguments are not interpreted by a shell."
+                ),
+                confidence=0.6,
+            )
+
+        elif rule_id in ("EVAL005",):
+            return Patch(
+                vulnerability_id=vuln.id,
+                original_code=snippet,
+                patched_code=snippet.replace("shell=True", "shell=False"),
+                explanation=(
+                    "Set shell=False and pass the command as a list of arguments. "
+                    "When shell=False, the OS does not invoke a shell interpreter, "
+                    "preventing injection via shell metacharacters."
+                ),
+                confidence=0.85,
+            )
+
+        elif rule_id in ("PY002",):
+            return Patch(
+                vulnerability_id=vuln.id,
+                original_code=snippet,
+                patched_code=snippet.replace("debug=True", "debug=os.environ.get('DEBUG', 'false').lower() == 'true'"),
+                explanation=(
+                    "Replace the hardcoded debug=True with an environment variable check. "
+                    "This ensures debug mode is never accidentally enabled in production."
+                ),
+                confidence=0.9,
+            )
+
+        elif rule_id in ("PY003",):
+            return Patch(
+                vulnerability_id=vuln.id,
+                original_code=snippet,
+                patched_code=snippet.replace("import random", "import secrets"),
+                explanation=(
+                    "Replace the random module with the secrets module for security-sensitive operations. "
+                    "secrets.token_urlsafe(32) generates cryptographically secure random tokens."
+                ),
+                confidence=0.8,
+            )
+
         else:
-            # Generic: add a comment recommending parameterised queries
-            patched = f"# FIXED: Use parameterized query instead\n# {snippet}"
+            return Patch(
+                vulnerability_id=vuln.id,
+                original_code=snippet,
+                patched_code=snippet,
+                explanation=(
+                    f"Manual review required for: {vuln.title}\n\n"
+                    f"Recommendation: {vuln.recommendation}"
+                ),
+                confidence=0.3,
+            )
 
-        return Patch(
-            vulnerability_id=vuln.id,
-            original_code=snippet,
-            patched_code=patched,
-            explanation="Replaced string interpolation with parameterized query placeholders to prevent SQL injection.",
-            confidence="medium",
-        )
+    def _fix_sql(self, snippet: str) -> str:
+        """Best-effort SQL injection fix for simple cases."""
+        # Replace f-string SQL with a comment showing parameterized form
+        lines = snippet.splitlines()
+        fixed = []
+        for line in lines:
+            if any(kw in line.upper() for kw in ["SELECT", "INSERT", "UPDATE", "DELETE"]):
+                fixed.append("# PATCHPILOT: Use parameterized query below:")
+                fixed.append("# cursor.execute('YOUR SQL HERE', (param1, param2))")
+                fixed.append("# Original (UNSAFE): " + line.strip())
+            else:
+                fixed.append(line)
+        return "\n".join(fixed)
 
-    def _patch_hardcoded_creds(self, vuln: Vulnerability, snippet: str) -> Patch:
-        """Replace hardcoded credential with os.environ.get()."""
-        # Extract variable name
-        var_match = re.match(r"(\w+)\s*=\s*['\"].*?['\"]", snippet)
-        if var_match:
-            var = var_match.group(1)
-            patched = f'{var} = os.environ.get("{var.upper()}", "")'
-        else:
-            patched = f'# FIXED: Move to environment variable\n# {snippet}'
-
-        return Patch(
-            vulnerability_id=vuln.id,
-            original_code=snippet,
-            patched_code=patched,
-            explanation="Replaced hardcoded credential with os.environ.get() to read the value from an environment variable.",
-            confidence="high",
-        )
-
-    def _patch_dangerous_function(self, vuln: Vulnerability, snippet: str) -> Patch:
-        """Replace dangerous function calls with safer alternatives."""
-        patched = snippet
-
-        if "eval(" in snippet:
-            patched = snippet.replace("eval(", "ast.literal_eval(")
-            explanation = "Replaced eval() with ast.literal_eval() which safely evaluates literals."
-        elif "exec(" in snippet:
-            patched = f"# SECURITY: exec() removed – refactor to avoid dynamic execution\n# {snippet}"
-            explanation = "Commented out exec() call. Refactor to use a safer pattern."
-        elif "os.system(" in snippet:
-            cmd_match = re.search(r"os\.system\((.*)\)", snippet)
-            cmd_arg = cmd_match.group(1) if cmd_match else "'cmd'"
-            patched = f"subprocess.run({cmd_arg}, shell=False, check=True)"
-            explanation = "Replaced os.system() with subprocess.run() without shell=True."
-        elif "shell=True" in snippet:
-            patched = snippet.replace("shell=True", "shell=False")
-            explanation = "Changed shell=True to shell=False to prevent command injection."
-        elif "pickle.loads" in snippet or "pickle.load" in snippet:
-            patched = snippet.replace("pickle.loads", "json.loads").replace("pickle.load", "json.load")
-            explanation = "Replaced pickle deserialization with JSON for safe data handling."
-        elif "__import__(" in snippet:
-            mod_match = re.search(r"__import__\(['\"](\w+)['\"]\)", snippet)
-            mod_name = mod_match.group(1) if mod_match else "module"
-            patched = f"importlib.import_module('{mod_name}')"
-            explanation = "Replaced __import__() with importlib.import_module()."
-        else:
-            patched = f"# SECURITY: Review and fix the following line\n# {snippet}"
-            explanation = "Flagged for manual review."
-
-        return Patch(
-            vulnerability_id=vuln.id,
-            original_code=snippet,
-            patched_code=patched,
-            explanation=explanation,
-            confidence="medium",
-        )
-
-    def _patch_static_analysis(self, vuln: Vulnerability, snippet: str) -> Patch:
-        """Handle static analysis findings."""
-        patched = snippet
-        explanation = "Applied rule-based fix."
-
-        if "debug=True" in snippet:
-            patched = snippet.replace("debug=True", "debug=False")
-            explanation = "Disabled debug mode for production safety."
-        elif "0.0.0.0" in snippet:
-            patched = snippet.replace("0.0.0.0", "127.0.0.1")
-            explanation = "Changed binding from 0.0.0.0 to 127.0.0.1 for local-only access."
-        elif "random." in snippet:
-            patched = snippet.replace("random.", "secrets.")
-            explanation = "Replaced insecure random module with cryptographically secure secrets module."
-        elif snippet.strip().startswith("assert"):
-            condition = snippet.strip()[len("assert"):].strip()
-            patched = f"if not ({condition}):\n    raise PermissionError('Access denied')"
-            explanation = "Replaced assert (removed with -O) with explicit if-check that raises an exception."
-        elif "csrf_exempt" in snippet:
-            patched = f"# SECURITY: CSRF protection should be enabled\n# {snippet}"
-            explanation = "Flagged csrf_exempt decorator for removal."
-        elif "import pickle" in snippet or "import marshal" in snippet or "import shelve" in snippet:
-            patched = f"# SECURITY: Consider using json instead\nimport json"
-            explanation = "Replaced dangerous serialization import with json."
-        else:
-            patched = f"# SECURITY: Review this line\n# {snippet}"
-            explanation = "Flagged for manual security review."
-
-        return Patch(
-            vulnerability_id=vuln.id,
-            original_code=snippet,
-            patched_code=patched,
-            explanation=explanation,
-            confidence="medium",
-        )
-
-    def _generic_patch(self, vuln: Vulnerability, snippet: str) -> Patch:
-        return Patch(
-            vulnerability_id=vuln.id,
-            original_code=snippet,
-            patched_code=f"# SECURITY: {vuln.title} – review needed\n# {snippet}",
-            explanation=f"{vuln.recommendation}",
-            confidence="low",
-        )
-
-    _RULE_HANDLERS: dict[str, object] = {
-        "SQL Injection": _patch_sql_injection,
-        "Hardcoded Credentials": _patch_hardcoded_creds,
-        "Dangerous Function Call": _patch_dangerous_function,
-        "Static Analysis": _patch_static_analysis,
-    }
-
-
-# Module-level singleton
-patch_generator = PatchGenerator()
+    def _fix_cred(self, snippet: str, vuln: Vulnerability) -> str:
+        """Replace hardcoded credential assignment with os.environ.get."""
+        import re
+        # Try to extract variable name
+        m = re.search(r"([\w]+)\s*=\s*[\"'][^\"']*[\"']", snippet)
+        if m:
+            var = m.group(1)
+            env_key = var.upper()
+            fixed = snippet.replace(
+                m.group(0),
+                f"{var} = os.environ.get('{env_key}', '')  # Load from environment"
+            )
+            return "import os\n" + fixed if "import os" not in snippet else fixed
+        return snippet

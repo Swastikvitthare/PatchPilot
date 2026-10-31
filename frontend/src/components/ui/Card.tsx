@@ -1,39 +1,34 @@
-"use client";
-
-import React from "react";
-import clsx from "clsx";
+import { clsx } from "clsx";
+import { ReactNode } from "react";
 
 interface CardProps {
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
-  glow?: boolean;
-  padding?: "none" | "sm" | "md" | "lg";
-  hover?: boolean;
+  glow?: "cyan" | "emerald" | "red" | "none";
+  padding?: "sm" | "md" | "lg";
 }
 
-const paddingStyles = {
-  none: "",
-  sm: "p-3",
-  md: "p-5",
-  lg: "p-6",
+const glowClasses = {
+  cyan:    "glow-cyan border-cyan-500/30",
+  emerald: "glow-emerald border-emerald-500/30",
+  red:     "glow-red border-red-500/30",
+  none:    "border-gray-800",
 };
 
-export default function Card({
-  children,
-  className,
-  glow = false,
-  padding = "md",
-  hover = false,
-}: CardProps) {
+const paddingClasses = {
+  sm: "p-4",
+  md: "p-6",
+  lg: "p-8",
+};
+
+export default function Card({ children, className, glow = "none", padding = "md" }: CardProps) {
   return (
     <div
       className={clsx(
-        "bg-gray-900 border border-gray-800 rounded-xl",
-        paddingStyles[padding],
-        glow && "glow-cyan",
-        hover &&
-          "transition-all duration-300 hover:border-gray-700 hover:shadow-lg hover:shadow-cyan-950/20",
-        className
+        "rounded-xl bg-gray-900 border transition-all duration-200",
+        glowClasses[glow],
+        paddingClasses[padding],
+        className,
       )}
     >
       {children}

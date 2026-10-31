@@ -1,5 +1,3 @@
-// ─── Core Types ──────────────────────────────────────────────────────────────
-
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export interface Vulnerability {
@@ -15,12 +13,6 @@ export interface Vulnerability {
   category: string;
   cwe_id?: string;
   recommendation: string;
-}
-
-export interface ScanRequest {
-  code: string;
-  language: string;
-  filename?: string;
 }
 
 export interface ScanSummary {
@@ -41,10 +33,10 @@ export interface ScanResult {
   filename: string;
 }
 
-export interface PatchRequest {
+export interface ScanRequest {
   code: string;
-  vulnerabilities: Vulnerability[];
-  scan_id: string;
+  language: string;
+  filename?: string;
 }
 
 export interface Patch {
@@ -58,12 +50,14 @@ export interface Patch {
 export interface PatchResult {
   scan_id: string;
   patches: Patch[];
-  patched_code: string;
-  summary: {
-    total_vulnerabilities: number;
-    patches_generated: number;
-    average_confidence: number;
-  };
+  patched_code_full: string;
+  ai_available: boolean;
+}
+
+export interface PatchRequest {
+  code: string;
+  vulnerabilities: Vulnerability[];
+  scan_id: string;
 }
 
 export interface RescanRequest {
@@ -81,25 +75,7 @@ export interface ReportRequest {
 
 export interface HealthResponse {
   status: string;
-  version?: string;
-  uptime?: number;
-}
-
-// ─── UI State Types ──────────────────────────────────────────────────────────
-
-export type ScanStatus = "idle" | "scanning" | "complete" | "error";
-export type PatchStatus = "idle" | "patching" | "complete" | "error";
-
-export interface StoredScan {
-  scanResult: ScanResult;
-  code: string;
-  language: string;
-  timestamp: string;
-}
-
-export interface StoredPatch {
-  patchResult: PatchResult;
-  scanResult: ScanResult;
-  originalCode: string;
-  timestamp: string;
+  version: string;
+  ai_available: boolean;
+  scanners_available: string[];
 }
