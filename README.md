@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <p align="center">
   <img src="https://img.shields.io/badge/PATCHPILOT-Cybersecurity-06b6d4?style=for-the-badge&logo=shield&logoColor=white" alt="PATCHPILOT" />
 </p>
@@ -216,3 +217,7 @@ The `backend/demo/` directory contains intentionally vulnerable Python files for
   Built for the DigitalOcean App Platform Hackathon · Open-Weight AI Track<br/>
   Powered by <strong>Google Gemma 4</strong> on <strong>DigitalOcean Gradient</strong>
 </p>
+=======
+# PatchPilot
+PATCHPILOT is an  AI-powered cybersecurity engineer that detects software vulnerabilities, explains security risks, generates intelligent code patches, and validates fixes through automated security scanning. Powered by Google Gemma 4 and DigitalOcean infrastructur PATCHPILOT helps developers identify, understand, and resolve security issues
+>>>>>>> c4c7d26844f70f9e21875f750361e49167a0665f
