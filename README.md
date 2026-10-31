@@ -8,10 +8,6 @@
   <strong>Find the flaw. Fix the code. Prove the patch.</strong>
 </p>
 
-<p align="center">
-  <a href="https://swastikvitthare.github.io/PatchPilot/">
-    <img src="https://img.shields.io/badge/Live_Demo-GitHub_Pages-10b981?style=for-the-badge&logo=github&logoColor=white" alt="Live Demo" />
-  </a>
 </p>
 
 <p align="center">
