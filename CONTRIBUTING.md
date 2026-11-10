@@ -21,8 +21,8 @@ python -m venv .venv
 
 Activate the environment:
 
-- Windows Command Prompt: `.venv\\Scripts\\activate.bat`
-- Windows PowerShell: `.venv\\Scripts\\Activate.ps1`
+- Windows Command Prompt: `.venv\Scripts\activate.bat`
+- Windows PowerShell: `.venv\Scripts\Activate.ps1`
 - macOS/Linux: `source .venv/bin/activate`
 
 Install backend dependencies and run the complete backend suite:
