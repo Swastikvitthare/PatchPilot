@@ -8,7 +8,6 @@
   <strong>Find the flaw. Fix the code. Prove the patch.</strong>
 </p>
 
-</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Track-Open--Weight_AI-10b981?style=flat-square" alt="Open-Weight AI" />
@@ -22,7 +21,7 @@
 ## 🌐 Live Interactive Demo
 
 Test PATCHPILOT directly in your browser without local setup:  
-👉 **https://swastikvitthare.github.io/PatchPilot/)**
+👉 **https://swastikvitthare.github.io/PatchPilot/**
 
 ---
 
@@ -101,7 +100,7 @@ patchpilot/
 │   │   ├── scanners/      # SQL Injection, Credentials, Eval, Python Static
 │   │   ├── services/      # Gemma 4 client, Patch generator, PDF report
 │   │   └── utils/         # Sanitizer & security limits
-│   ├── tests/             # Pytest test suite (26 unit tests)
+│   ├── tests/             # Pytest unit and API integration tests
 │   └── demo/              # Vulnerable code examples
 ├── frontend/              # Next.js 14 TypeScript frontend
 │   └── src/
@@ -187,10 +186,15 @@ See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full instructions on deploying 
 ```bash
 cd backend
 venv\Scripts\activate
-python -m pytest tests/test_scanners.py -v
+python -m pytest tests -v --tb=short
 ```
 
 ---
+
+## Security and Contributing
+
+- Read [SECURITY.md](SECURITY.md) before reporting a vulnerability.
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License
 
